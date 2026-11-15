@@ -67,9 +67,11 @@ type app struct {
 	tray *mygo.Tray
 	bar  *mygo.Window
 
-	// 胶囊（原生 ui）：状态、窗口底色（嵌入模式才用）
-	barUI barUI
-	barBG string
+	// 胶囊（原生 ui）：状态、窗口底色（嵌入模式才用）、模式文案
+	barUI    barUI
+	barBG    string
+	barMode  string
+	quitting bool
 
 	embedded        bool      // 任务胶囊是否已嵌进任务栏（SetParent）
 	overTaskbar     bool      // 覆盖模式：顶层窗口压在任务栏空白区
@@ -169,14 +171,20 @@ func main() {
 		a.tray.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
 			{Label: "打开面板", Click: func(*mygo.MenuItem, *mygo.Window) { a.showPanel() }},
 			{Label: "设置", Click: func(*mygo.MenuItem, *mygo.Window) { a.openSettings() }},
+			{Label: "打开日志", Click: func(*mygo.MenuItem, *mygo.Window) { openLog() }},
 			mygo.Separator(),
-			{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Exit(0) }},
+			{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) {
+				a.quitting = true
+				logf("panel", "面板退出")
+				mygo.App.Exit(0)
+			}},
 		}))
 
 		a.updateBarState() // 先定好状态色再建窗口，避免首帧闪一下空闲灰
 		// 系统「减少动画」：首帧也按它来，别先淡入一次再停
 		a.barUI.still = mygo.Theme.Preferences().ReduceMotion
 		a.ensureBar()
+		logf("panel", "面板启动 %s：胶囊=%s", buildStamp, a.barModeText())
 
 		if openOnStart {
 			a.showPanel()
@@ -188,6 +196,7 @@ func main() {
 	if err := mygo.App.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		dbg("App.Run 失败: %v", err)
+		logf("panel", "UI 循环退出: %v", err)
 		os.Exit(1)
 	}
 }

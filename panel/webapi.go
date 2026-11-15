@@ -373,12 +373,14 @@ func (api Api) hold(args ...string) error {
 		api.a.fitPanel()
 	})
 	out, err := runCLI(args...)
+	logAction(args, err, out)
 	return api.finish(out, err, true)
 }
 
 // run 执行一次 CLI 动作（释放/停止），完成后立即按最新租约数调整高度。
 func (api Api) run(args ...string) error {
 	out, err := runCLI(args...)
+	logAction(args, err, out)
 	return api.finish(out, err, false)
 }
 

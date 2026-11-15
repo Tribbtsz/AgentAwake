@@ -432,4 +432,5 @@ func (a *app) checkTaskbar() {
 	}
 	fmt.Println("[AgentAwake] 任务栏嵌入失效，已退回覆盖模式")
 	dbg("任务栏嵌入失效，已退回覆盖模式")
+	logf("panel", "任务栏嵌入失效，已退回覆盖模式")
 }

@@ -105,8 +105,10 @@ func (a *app) ensureBar() {
 	//     画出来，再挂进任务栏。
 	embed := os.Getenv("AGENTAWAKE_EMBED") == "1" && findTrayHost() != 0
 	a.barBG = ""
+	a.barMode = "覆盖任务栏"
 	if embed {
 		a.barBG = sampleTaskbarColor()
+		a.barMode = "嵌入任务栏"
 	}
 
 	a.bar = mygo.NewWindow(mygo.WindowOptions{
@@ -125,7 +127,12 @@ func (a *app) ensureBar() {
 		BackgroundColor: a.barBG,
 		Content:         ui.View(a.barView),
 	})
-	a.bar.OnClosed(func() { a.bar = nil })
+	a.bar.OnClosed(func() {
+		if !a.quitting {
+			logf("panel", "胶囊窗口被关闭（不是退出触发的）")
+		}
+		a.bar = nil
+	})
 	dbg("ensureBar hwnd=%d size=%dx%d embed=%v bg=%q", a.bar.NativeHandle(), w, h, embed, a.barBG)
 
 	if embed {
@@ -137,10 +144,13 @@ func (a *app) ensureBar() {
 				}
 				if a.embedIntoTaskbar() {
 					a.embedded = true
+					logf("panel", "胶囊已嵌入任务栏")
 				} else {
 					a.embedded = false
 					a.overTaskbar = true
+					a.barMode = "覆盖任务栏"
 					a.positionOverTaskbar()
+					logf("panel", "嵌入任务栏失败，改用覆盖模式")
 				}
 			})
 		})
@@ -161,6 +171,17 @@ func (a *app) ensureBar() {
 	}()
 	go a.watchTaskbar()
 	go a.keepOnTop()
+}
+
+// barModeText 给日志用的胶囊模式文案
+func (a *app) barModeText() string {
+	if !a.cfg.ShowBar {
+		return "隐藏"
+	}
+	if a.barMode == "" {
+		return "未知"
+	}
+	return a.barMode
 }
 
 // currentBarSize 当前胶囊尺寸
