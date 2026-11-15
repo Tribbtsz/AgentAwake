@@ -4,6 +4,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,7 +38,7 @@ func TestParseSpec(t *testing.T) {
 		}
 	}
 
-	for _, bad := range []string{"", "明天", "30x"} {
+	for _, bad := range []string{"", "明天", "30x", "24:00", "12:60", "12:00:61"} {
 		if _, err := parseSpec(bad, now); err == nil {
 			t.Errorf("parseSpec(%q) 应当报错", bad)
 		}
@@ -65,8 +66,45 @@ func TestParseArgs(t *testing.T) {
 		t.Fatalf("= 形式解析错误: %+v", o)
 	}
 
+	o, _, err = parseArgs([]string{"release", "-Key", "ab12cd"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.key != "AB12CD" {
+		t.Fatalf("密钥应统一成大写，得到 %q", o.key)
+	}
+
 	if _, _, err := parseArgs([]string{"status", "-nope"}); err == nil {
 		t.Error("未知参数应当报错")
+	}
+
+	// 数字参数写错时必须报错，不能悄悄当成 0
+	for _, args := range [][]string{
+		{"acquire", "-followpid", "abc"},
+		{"acquire", "-followpid", "0"},
+		{"hold", "-timeouthours", "-1"},
+		{"acquire", "-ttlseconds", "x"},
+	} {
+		if _, _, err := parseArgs(args); err == nil {
+			t.Errorf("%v 应当报错", args)
+		}
+	}
+}
+
+func TestPowerValueArgs(t *testing.T) {
+	target := powerTarget{Sub: "sub-guid", Setting: "set-guid"}
+
+	ac := powerValueArgs("scheme-guid", target, true, 0)
+	want := []string{"/setacvalueindex", "scheme-guid", "sub-guid", "set-guid", "0"}
+	for i := range want {
+		if ac[i] != want[i] {
+			t.Fatalf("AC 参数 = %v，期望 %v", ac, want)
+		}
+	}
+
+	dc := powerValueArgs("", target, false, 900)
+	if dc[0] != "/setdcvalueindex" || dc[1] != "SCHEME_CURRENT" || dc[4] != "900" {
+		t.Fatalf("DC 参数错误: %v", dc)
 	}
 }
 
@@ -160,5 +198,24 @@ func TestNewLeaseID(t *testing.T) {
 			t.Fatalf("租约 ID 重复: %s", id)
 		}
 		seen[id] = true
+	}
+}
+
+func TestNewLeaseKey(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 500; i++ {
+		k := newLeaseKey()
+		if len(k) != 6 {
+			t.Fatalf("密钥长度应为 6，得到 %q", k)
+		}
+		for _, r := range k {
+			if !strings.ContainsRune(keyAlphabet, r) {
+				t.Fatalf("密钥含非法字符: %q", k)
+			}
+		}
+		if seen[k] {
+			t.Fatalf("密钥重复: %s", k)
+		}
+		seen[k] = true
 	}
 }

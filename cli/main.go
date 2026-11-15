@@ -29,6 +29,7 @@ import (
 type options struct {
 	name         string
 	id           string
+	key          string
 	forSpec      string
 	until        string
 	note         string
@@ -138,6 +139,12 @@ func parseArgs(args []string) (*options, []string, error) {
 				return nil, nil, err
 			}
 			o.id = v
+		case "key":
+			v, err := need()
+			if err != nil {
+				return nil, nil, err
+			}
+			o.key = strings.ToUpper(strings.TrimSpace(v))
 		case "for":
 			v, err := need()
 			if err != nil {
@@ -167,19 +174,28 @@ func parseArgs(args []string) (*options, []string, error) {
 			if err != nil {
 				return nil, nil, err
 			}
-			o.followPID, _ = strconv.Atoi(strings.TrimSpace(v))
+			o.followPID, err = strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || o.followPID <= 0 {
+				return nil, nil, fmt.Errorf("-%s 需要一个正整数：%s", key, v)
+			}
 		case "timeouthours":
 			v, err := need()
 			if err != nil {
 				return nil, nil, err
 			}
-			o.timeoutHours, _ = strconv.Atoi(strings.TrimSpace(v))
+			o.timeoutHours, err = strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || o.timeoutHours <= 0 {
+				return nil, nil, fmt.Errorf("-%s 需要一个正整数：%s", key, v)
+			}
 		case "ttlseconds":
 			v, err := need()
 			if err != nil {
 				return nil, nil, err
 			}
-			o.ttlSeconds, _ = strconv.Atoi(strings.TrimSpace(v))
+			o.ttlSeconds, err = strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || o.ttlSeconds < 0 {
+				return nil, nil, fmt.Errorf("-%s 需要一个非负整数：%s", key, v)
+			}
 		default:
 			return nil, nil, fmt.Errorf("未知参数 -%s", key)
 		}
@@ -244,6 +260,7 @@ func cmdAcquire(o *options, cmd string) int {
 
 	l := &Lease{
 		ID:         newLeaseID(),
+		Key:        uniqueLeaseKey(),
 		Name:       name,
 		Note:       o.note,
 		TTLSeconds: o.ttlSeconds,
@@ -279,22 +296,36 @@ func cmdAcquire(o *options, cmd string) int {
 	removeLegacyTasks()
 	registerWatchdogTask()
 	sup := startSupervisor()
+	if sup == 0 {
+		msg := "守护进程未能启动，巡检任务会在几分钟内重试"
+		fmt.Fprintln(os.Stderr, "警告："+msg)
+		logf("awake", "新建租约 %s 时%s", l.ID, msg)
+	} else if !waitHolding(3 * time.Second) {
+		// 守护进程在跑但还没改完电源：再给它一点时间，同时留下日志
+		logf("awake", "租约 %s 已生效，守护进程尚未进入保持模式", l.ID)
+	}
 	logf("awake", "新建租约 %s [%s] 模式=%s 绑定进程=%d", l.ID, l.Name, l.Mode, l.PID)
 
 	if o.jsonOut {
-		printJSON(map[string]any{
+		out := map[string]any{
 			"id":            l.ID,
+			"key":           l.Key,
 			"name":          l.Name,
 			"mode":          l.Mode,
 			"deadline":      nilIfEmpty(l.Deadline),
 			"maxUntil":      l.MaxUntil,
 			"pid":           nilIfZero(l.PID),
-			"supervisorPid": sup,
-		})
+			"supervisorPid": nilIfZero(sup),
+		}
+		if sup == 0 {
+			out["warning"] = "守护进程未能启动，巡检任务会重试"
+		}
+		printJSON(out)
 		return 0
 	}
 
 	fmt.Printf("%s  %s\n", l.ID, l.Name)
+	fmt.Printf("密钥: %s（结束任务时：awake release -key %s）\n", l.Key, l.Key)
 	if l.Mode == "deadline" {
 		fmt.Printf("模式: 定时到 %s\n", humanTime(l.Deadline))
 	} else {
@@ -427,6 +458,7 @@ func cmdStop() int {
 
 type leaseRow struct {
 	ID        string `json:"id"`
+	Key       string `json:"key"`
 	Name      string `json:"name"`
 	Mode      string `json:"mode"`
 	Deadline  string `json:"deadline"`
@@ -450,6 +482,7 @@ func cmdStatus(o *options) int {
 		reason := inactiveReason(l, now)
 		row := leaseRow{
 			ID:       l.ID,
+			Key:      l.Key,
 			Name:     l.Name,
 			Mode:     l.Mode,
 			Deadline: l.Deadline,
@@ -535,8 +568,9 @@ func leaseLine(l Lease, row leaseRow, now time.Time) string {
 			when = fmt.Sprintf("到期 %s（剩 %s）", t.Format("01-02 15:04"), formatSpan(t.Sub(now)))
 		}
 	}
-	return "  " + padRight(l.ID, 12) + "  " + padRight(l.Name, 24) + " " +
-		padRight(mode, 6) + " " + padRight(pidText, 28) + " " + when
+	return "  " + padRight(l.ID, 12) + "  " + padRight(l.Key, 6) + "  " +
+		padRight(l.Name, 24) + " " + padRight(mode, 6) + " " +
+		padRight(pidText, 28) + " " + when
 }
 
 // padRight 按终端显示宽度补空格（中日韩字符占 2 格）
@@ -630,8 +664,9 @@ func printHelp() {
   awake hold -until 06:00             保持到今天/明天 06:00
   awake acquire -name build -followpid 1234
                                       申请租约并绑定进程；进程退出自动释放
+  awake release -key ABC123           用租约密钥释放（推荐，只影响自己的租约）
   awake release -id 3f2a              释放租约（前缀匹配）
-  awake release -name build           按名字释放
+  awake release -name build           按名字释放（可能命中多个同名租约）
   awake release -all                  释放全部
   awake extend -for 2h -all           延长到期时间
   awake heartbeat -id 3f2a            刷新心跳（不绑定进程时用）

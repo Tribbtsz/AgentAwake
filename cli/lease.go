@@ -22,6 +22,7 @@ import (
 // Lease 与面板读取的字段名保持一致（%LOCALAPPDATA%\AgentAwake\leases\*.json）
 type Lease struct {
 	ID          string `json:"id"`
+	Key         string `json:"key"` // 短密钥：agent 用它只释放自己的租约
 	Name        string `json:"name"`
 	Note        string `json:"note"`
 	Mode        string `json:"mode"` // deadline | release
@@ -50,9 +51,15 @@ func ensureDirs() {
 	_ = os.MkdirAll(leaseDir(), 0o755)
 }
 
-// logf 写入 awake.log（失败不影响主流程）
+// logf 写入 awake.log（失败不影响主流程）。
+// 超过 1 MiB 就轮转成 awake.log.old，避免长期使用后无限增长。
 func logf(source, format string, args ...any) {
 	ensureDirs()
+	if st, err := os.Stat(logPath()); err == nil && st.Size() > 1<<20 {
+		old := logPath() + ".old"
+		_ = os.Remove(old)
+		_ = os.Rename(logPath(), old)
+	}
 	line := fmt.Sprintf("%s  [%s] %s\n", time.Now().Format("2006-01-02 15:04:05"), source, fmt.Sprintf(format, args...))
 	f, err := os.OpenFile(logPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -111,6 +118,9 @@ func parseSpec(spec string, now time.Time) (time.Time, error) {
 		se := 0
 		if len(parts) >= 3 {
 			se, _ = strconv.Atoi(parts[2])
+		}
+		if h > 23 || mi > 59 || se > 59 {
+			return time.Time{}, fmt.Errorf("时间超出范围：%s", s)
 		}
 		cand := time.Date(now.Year(), now.Month(), now.Day(), h, mi, se, 0, now.Location())
 		if !cand.After(now) {
@@ -174,6 +184,37 @@ func newLeaseID() string {
 	return hex.EncodeToString(b) // 12 位十六进制，和旧版长度一致
 }
 
+// keyAlphabet 去掉了容易看错的 0/O/1/I，长度刚好 32，取模无偏。
+const keyAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+
+// newLeaseKey 生成 6 位短密钥（约 10 亿种）
+func newLeaseKey() string {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%06X", time.Now().UnixNano()&0xFFFFFF)
+	}
+	for i := range b {
+		b[i] = keyAlphabet[int(b[i])%len(keyAlphabet)]
+	}
+	return string(b)
+}
+
+// uniqueLeaseKey 避开现有租约，保证同一台机器上不重复
+func uniqueLeaseKey() string {
+	used := map[string]bool{}
+	for _, l := range loadLeases() {
+		if l.Key != "" {
+			used[strings.ToUpper(l.Key)] = true
+		}
+	}
+	for i := 0; i < 20; i++ {
+		if k := newLeaseKey(); !used[k] {
+			return k
+		}
+	}
+	return newLeaseKey()
+}
+
 func loadLeases() []Lease {
 	entries, err := os.ReadDir(leaseDir())
 	if err != nil {
@@ -233,6 +274,18 @@ func findLeases(o *options, requireSelector bool) ([]Lease, error) {
 		}
 		if len(hits) == 0 {
 			return nil, fmt.Errorf("找不到租约 %s", o.id)
+		}
+		return hits, nil
+	}
+	if o.key != "" {
+		var hits []Lease
+		for _, l := range all {
+			if l.Key != "" && strings.EqualFold(l.Key, o.key) {
+				hits = append(hits, l)
+			}
+		}
+		if len(hits) == 0 {
+			return nil, fmt.Errorf("找不到密钥为 %s 的租约", strings.ToUpper(o.key))
 		}
 		return hits, nil
 	}
