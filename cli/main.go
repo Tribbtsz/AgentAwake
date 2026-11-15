@@ -98,6 +98,13 @@ func parseArgs(args []string) (*options, []string, error) {
 
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		// 帮助开关：-h / --help / -help / -? —— 以前会被当成未知参数，
+		// 只有 `awake help` 能用。统一折成 help 命令。
+		switch strings.ToLower(a) {
+		case "-h", "--h", "-help", "--help", "-?", "/?":
+			pos = append(pos, "help")
+			continue
+		}
 		if len(a) < 2 || a[0] != '-' {
 			pos = append(pos, a)
 			continue

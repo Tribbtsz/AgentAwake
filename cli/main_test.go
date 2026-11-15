@@ -91,6 +91,20 @@ func TestParseArgs(t *testing.T) {
 	}
 }
 
+// awake -h 曾经被当成未知参数报错，只有 `awake help` 能用
+func TestParseArgsHelpFlags(t *testing.T) {
+	for _, args := range [][]string{{"-h"}, {"--help"}, {"-?"}, {"-help"}, {"/?"}} {
+		_, pos, err := parseArgs(args)
+		if err != nil {
+			t.Errorf("%v 不应报错：%v", args, err)
+			continue
+		}
+		if len(pos) != 1 || pos[0] != "help" {
+			t.Errorf("%v 应折成 help 命令，得到 %v", args, pos)
+		}
+	}
+}
+
 func TestPowerValueArgs(t *testing.T) {
 	target := powerTarget{Sub: "sub-guid", Setting: "set-guid"}
 
