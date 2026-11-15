@@ -391,7 +391,7 @@ $('sleepBtn').addEventListener('click', async () => {
   const btn = $('sleepBtn');
   btn.disabled = true;
   try {
-    await call('Api.SleepDisplay');
+    await call('SleepDisplay');
   } catch (e) {
     showError('息屏失败：' + (e && e.message ? e.message : e));
   } finally {
