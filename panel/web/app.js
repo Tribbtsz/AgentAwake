@@ -27,8 +27,11 @@ function showPage(name) {
   $('pageSettings').hidden = name !== 'settings';
   $('navBtn').textContent = name === 'status' ? '设置' : '返回';
   const applied = call('SetPage', name).catch(() => {});
-  // 设置页内容固定，窗口高度按内容贴合（等后端确认页面已切过去再量）
-  if (name === 'settings') applied.then(fitSettingsWindow);
+  if (name === 'settings') {
+    $('pageSettings').scrollTop = 0;
+    // 设置页内容固定，窗口高度按内容贴合（等后端确认页面已切过去再量）
+    applied.then(fitSettingsWindow);
+  }
 }
 
 // fitSettingsWindow 量出设置页的自然高度，交给主进程把窗口调到刚好放下。
@@ -53,6 +56,95 @@ function fitSettingsWindow() {
 
 $('navBtn').onclick = () => showPage(page === 'status' ? 'settings' : 'status');
 $('closeBtn').onclick = () => window.mygo.window.close();
+
+// ---------- Agent 提示词 ----------
+let promptText = '';
+let promptEditing = false;
+
+$('copyPromptBtn').onclick = async () => {
+  try {
+    const text = await call('Prompt');
+    await call('CopyText', text);
+    toast('提示词已复制');
+  } catch (e) {
+    toast('复制失败');
+  }
+};
+
+function paintPrompt() {
+  $('promptView').textContent = promptText;
+  if (!promptEditing) $('promptEditBox').value = promptText;
+}
+
+// 编辑框按内容撑开：不要 textarea 自己的滚动条，超出窗口交给页面滚动
+function growPromptBox() {
+  const box = $('promptEditBox');
+  if (!box || box.hidden) return;
+  box.style.height = 'auto';
+  box.style.height = box.scrollHeight + 'px';
+}
+
+async function loadPrompt() {
+  try {
+    promptText = await call('Prompt');
+  } catch {
+    promptText = '';
+  }
+  paintPrompt();
+  fitSettingsWindow();
+}
+
+function setPromptEditing(on) {
+  promptEditing = on;
+  $('promptView').hidden = on;
+  $('promptEditBox').hidden = !on;
+  $('promptEdit').hidden = on;
+  $('promptReset').hidden = !on;
+  $('promptCancel').hidden = !on;
+  $('promptSave').hidden = !on;
+  if (on) {
+    $('promptEditBox').value = promptText;
+    growPromptBox();
+    $('promptEditBox').focus();
+    fitSettingsWindow();
+  } else {
+    paintPrompt();
+    fitSettingsWindow();
+  }
+}
+
+$('promptEdit').onclick = () => setPromptEditing(true);
+$('promptCancel').onclick = () => setPromptEditing(false);
+$('promptEditBox').addEventListener('input', () => {
+  growPromptBox();
+  fitSettingsWindow();
+});
+$('promptSave').onclick = async () => {
+  const text = $('promptEditBox').value.trim();
+  if (!text) {
+    toast('提示词不能为空');
+    return;
+  }
+  try {
+    await callPending('SetPrompt', text);
+    promptText = text;
+    setPromptEditing(false);
+    toast('提示词已保存');
+  } catch (e) {
+    toast('保存失败');
+  }
+};
+$('promptReset').onclick = async () => {
+  try {
+    promptText = await call('DefaultPrompt');
+    $('promptEditBox').value = promptText;
+    growPromptBox();
+    fitSettingsWindow();
+    toast('已填入默认提示词，保存后生效');
+  } catch (e) {
+    toast('读取默认提示词失败');
+  }
+};
 
 // ---------- 等待 / 异常反馈 ----------
 let pending = 0;
@@ -92,18 +184,30 @@ function showError(msg) {
 }
 $('alertClose').onclick = () => { showError(''); dismissedError = true; };
 let dismissedError = false;
+let lastErrorText = '';
 
 // ---------- 渲染 ----------
-function render(s) {
-  $('dot').className = 'dot' + (s.holding ? ' on' : (s.error ? ' err' : ''));
-  $('statusLabel').textContent = s.label;
-  $('statusSub').textContent = s.sub;
-  if (s.build) $('buildTag').textContent = '· ' + s.build;
+function setText(el, value) {
+  if (el && el.textContent !== value) el.textContent = value;
+}
 
-  // 后端报错时显示提醒条（用户可关闭）
+function render(s) {
+  const dot = $('dot');
+  const dotClass = 'dot' + (s.holding ? ' on' : (s.error ? ' err' : ''));
+  if (dot.className !== dotClass) dot.className = dotClass;
+  setText($('statusLabel'), s.label);
+  setText($('statusSub'), s.sub);
+  if (s.build) setText($('buildTag'), '· ' + s.build);
+
+  // 后端报错时显示提醒条（用户可关闭；错误内容变了要重新提醒）
   if (s.error) {
+    if (s.error !== lastErrorText) {
+      lastErrorText = s.error;
+      dismissedError = false;
+    }
     if (!dismissedError) showError(s.error);
   } else {
+    lastErrorText = '';
     dismissedError = false;
     showError('');
   }
@@ -114,14 +218,11 @@ function render(s) {
   renderLeases(s);
 
   if (document.activeElement !== $('offsetRange')) $('offsetRange').value = s.offsetX;
-  $('offsetVal').textContent = (s.offsetX > 0 ? '+' : '') + s.offsetX + ' px';
+  setText($('offsetVal'), (s.offsetX > 0 ? '+' : '') + s.offsetX + ' px');
   if (document.activeElement !== $('maxHoursRange')) $('maxHoursRange').value = s.maxHours;
-  $('maxHoursVal').textContent = s.maxHours + ' 小时';
+  setText($('maxHoursVal'), s.maxHours + ' 小时');
   $('showBarSwitch').checked = s.showBar;
   $('pulseSwitch').checked = s.pulse;
-  // 保持中 + 开启呼吸 → 状态块轻微明暗循环
-  const pulsing = s.holding && s.pulse;
-  document.body.classList.toggle('pulse-on', pulsing);
 }
 
 function renderChips(s) {
@@ -167,7 +268,7 @@ function renderLeases(s) {
       const b = document.createElement('button');
       b.className = 'btn small';
       b.textContent = '完成';
-      b.onclick = async () => { await call('Release', l.id); toast('已通知完成'); refresh(); };
+      b.onclick = () => runAction(b, () => call('Release', l.id), '已通知完成');
       el.appendChild(b);
     }
     box.appendChild(el);
@@ -202,8 +303,9 @@ async function runAction(btn, fn, done) {
     if (done) toast(done);
     dismissedError = false;
   } catch (e) {
-    showError('操作失败：' + (e && e.message ? e.message : e));
-    toast('操作失败');
+    const msg = e && e.message ? String(e.message) : String(e);
+    showError('操作失败：' + msg);
+    toast(msg.split('\n')[0].slice(0, 48) || '操作失败');
   } finally {
     btn.disabled = false;
     btn.textContent = prev;
@@ -261,16 +363,23 @@ $('maxHoursRange').addEventListener('change', async (e) => {
 });
 
 // ---------- 轮询 ----------
+let refreshing = false;
+
 async function refresh() {
+  if (refreshing) return;   // 上一次还没回来，不要堆积请求
+  refreshing = true;
   try {
     const s = await call('State');
     if (s) render(s);
   } catch (err) {
     showError('无法读取状态：' + (err && err.message ? err.message : err));
+  } finally {
+    refreshing = false;
   }
 }
 
 refresh();
+loadPrompt();
 (async () => {
   try { showPage(await call('InitialPage')); } catch { showPage('status'); }
   try {

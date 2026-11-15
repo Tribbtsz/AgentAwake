@@ -183,6 +183,12 @@ button:hover {
 }
 button:active { transform: scale(0.975); }
 button:disabled { opacity: .6; cursor: default; }
+button:focus-visible,
+input[type="range"]:focus-visible,
+.switch input:focus-visible + .track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 button.primary {
   background:
     linear-gradient(180deg,
@@ -251,7 +257,7 @@ button.ghost.close:hover { color: var(--danger); }
   line-height: 1.45;
   animation: fade var(--dur) var(--ease);
 }
-.alert-text { flex: 1; white-space: pre-wrap; word-break: break-word; }
+.alert-text { flex: 1; white-space: pre-wrap; word-break: break-word; user-select: text; }
 .alert-close {
   background: transparent;
   padding: 0 2px;
@@ -302,9 +308,9 @@ button.ghost.close:hover { color: var(--danger); }
 /* 租约 */
 .lease { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: var(--radius-md); }
 .lease-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
-.lease-top { display: flex; align-items: baseline; gap: 7px; }
-.lease-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lease-tag { font-size: 10px; color: var(--faint); }
+.lease-top { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.lease-name { flex: 0 1 auto; min-width: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lease-tag { flex: 0 0 auto; white-space: nowrap; font-size: 10px; color: var(--faint); }
 .lease-detail { font-size: 10.5px; color: var(--faint); }
 .lease.dead { opacity: .45; }
 
@@ -344,6 +350,26 @@ main#pageSettings {
 .setting-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .value { font-variant-numeric: tabular-nums; }
 .hint { font-size: 10.5px; }
+
+/* Agent 提示词：查看态 / 编辑态 */
+#pageSettings .prompt-card { gap: 10px; }
+.prompt-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.prompt-view, .prompt-edit {
+  margin: 0;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 0;
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--text);
+  font: 10.5px/1.55 "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+.prompt-view { overflow: visible; }
+.prompt-edit { min-height: 190px; height: auto; resize: none; overflow: hidden; }
+.prompt-edit:focus { box-shadow: inset 0 0 0 1px var(--accent); }
 
 /* 滑条 */
 input[type="range"] {
@@ -421,23 +447,17 @@ input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.14); }
 }
 .toast.show { opacity: 1; transform: none; }
 
-/* 保持中呼吸：状态块轻微明暗 + 圆点柔光呼吸（可关闭） */
-body.pulse-on .status-card {
-  animation: breathe 2.6s ease-in-out infinite;
-}
-body.pulse-on .dot.on {
-  animation: dot-breathe 2.6s ease-in-out infinite;
-}
-@keyframes breathe {
-  0%, 100% { filter: brightness(1); }
-  50%      { filter: brightness(1.28); }
-}
-@keyframes dot-breathe {
-  0%, 100% { box-shadow: 0 0 0 5px rgba(127, 201, 155, 0.08); }
-  50%      { box-shadow: 0 0 0 6px rgba(127, 201, 155, 0.18); }
-}
-
+/* 面板状态块保持静止：呼吸只用于任务栏胶囊，避免盯着面板时一直闪 */
 @keyframes fade {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+/* 用户要求减少动画时全部静止 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
