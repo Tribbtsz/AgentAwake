@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AgentAwake</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="titlebar" style="--app-region: drag">
+      <img class="titlebar-icon" src="icon.png" alt="" />
+      <span class="titlebar-name">AgentAwake</span>
+      <span class="titlebar-build" id="buildTag"></span>
+      <div class="spacer"></div>
+      <button class="ghost" id="navBtn">设置</button>
+      <button class="ghost close" id="closeBtn" title="关闭">✕</button>
+    </header>
+
+    <main id="pageStatus">
+      <div class="progress" id="progress" hidden><span></span></div>
+      <div class="alert" id="alert" hidden>
+        <span class="alert-text"></span>
+        <button class="alert-close" id="alertClose" title="忽略">✕</button>
+      </div>
+
+      <section class="fixed-top">
+        <div class="status-card">
+          <span class="dot" id="dot"></span>
+          <div class="status-text">
+            <strong id="statusLabel">空闲</strong>
+            <span class="muted" id="statusSub">没有租约，按系统原设置睡眠</span>
+          </div>
+        </div>
+
+        <section class="chips" id="powerChips"></section>
+
+        <section class="actions">
+          <p class="section-title">手动保持</p>
+          <div class="btn-row" id="holdBtns">
+            <button class="btn primary" data-min="30">30 分钟</button>
+            <button class="btn" data-hours="2">2 小时</button>
+            <button class="btn" data-until="06:00">到 06:00</button>
+            <button class="btn" data-until="12:00">到 12:00</button>
+            <button class="btn quiet" id="stopBtn">全部停止</button>
+          </div>
+        </section>
+      </section>
+
+      <!-- 动态租约列表：占据剩余空间，多了自己滚 -->
+      <section class="lease-list" id="leases"></section>
+    </main>
+
+    <main id="pageSettings" hidden>
+      <div class="progress" id="progress2" hidden><span></span></div>
+      <h2 class="page-title">设置</h2>
+
+      <div class="card">
+        <div class="setting-head">
+          <span>任务胶囊位置</span>
+          <span class="muted value" id="offsetVal">+0 px</span>
+        </div>
+        <input type="range" id="offsetRange" min="-1400" max="1400" step="10" value="0" />
+        <div class="setting-foot">
+          <span class="muted hint">调整任务栏任务胶囊的左右位置</span>
+          <button class="btn small" id="resetOffset">重置</button>
+        </div>
+      </div>
+
+      <div class="card row">
+        <div class="grow">
+          <div class="setting-head"><span>在任务栏显示任务胶囊</span></div>
+          <p class="muted hint">关闭后只剩托盘图标</p>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="showBarSwitch" />
+          <span class="track"><span class="knob"></span></span>
+        </label>
+      </div>
+
+      <div class="card row">
+        <div class="grow">
+          <div class="setting-head"><span>保持中呼吸闪烁</span></div>
+          <p class="muted hint">保持期间状态块轻微明暗变化，关闭则完全静止</p>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="pulseSwitch" />
+          <span class="track"><span class="knob"></span></span>
+        </label>
+      </div>
+
+      <div class="card">
+        <div class="setting-head">
+          <span>agent 最长保持</span>
+          <span class="muted value" id="maxHoursVal">12 小时</span>
+        </div>
+        <input type="range" id="maxHoursRange" min="1" max="24" step="1" value="12" />
+        <p class="muted hint">agent 申请后一直保持到它说完成；这是防止忘记释放的兜底上限。</p>
+      </div>
+    </main>
+
+    <footer id="toast" class="toast" hidden></footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
