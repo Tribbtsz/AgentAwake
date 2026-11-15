@@ -81,7 +81,7 @@ func runSupervisor() int {
 		// 清掉已失效的租约文件，并记下原因
 		for _, l := range loadLeases() {
 			if reason := inactiveReason(l, now); reason != "" {
-				logf("supervisor", "租约结束 %s [%s] 原因=%s", l.ID, l.Name, reason)
+				logf("supervisor", "租约结束 %s [%s] key=%s 原因=%s", l.ID, l.Name, l.Key, reason)
 				removeLease(l.ID)
 			}
 		}

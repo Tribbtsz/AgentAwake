@@ -311,7 +311,7 @@ func cmdAcquire(o *options, cmd string) int {
 		// 守护进程在跑但还没改完电源：再给它一点时间，同时留下日志
 		logf("awake", "租约 %s 已生效，守护进程尚未进入保持模式", l.ID)
 	}
-	logf("awake", "新建租约 %s [%s] 模式=%s 绑定进程=%d", l.ID, l.Name, l.Mode, l.PID)
+	logf("awake", "新建租约 %s [%s] key=%s 模式=%s 绑定进程=%d", l.ID, l.Name, l.Key, l.Mode, l.PID)
 
 	if o.jsonOut {
 		out := map[string]any{
@@ -355,7 +355,7 @@ func cmdRelease(o *options) int {
 	for _, t := range targets {
 		removeLease(t.ID)
 		ids = append(ids, t.ID)
-		logf("awake", "主动释放租约 %s [%s]", t.ID, t.Name)
+		logf("awake", "主动释放租约 %s [%s] key=%s", t.ID, t.Name, t.Key)
 	}
 	left := len(loadLeases())
 

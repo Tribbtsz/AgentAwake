@@ -53,6 +53,9 @@ func ensureDirs() {
 
 // logf 写入 awake.log（失败不影响主流程）。
 // 超过 1 MiB 就轮转成 awake.log.old，避免长期使用后无限增长。
+// 租约的 key 会进日志：它本来就在 leases\*.json 里（同目录同权限），日志不扩大
+// 暴露面，而人要把它和面板/CLI 上看到的那串对上号，只有 key 认得出。日志仍属
+// 敏感信息，不要贴给 agent 或贴进 issue。
 func logf(source, format string, args ...any) {
 	ensureDirs()
 	if st, err := os.Stat(logPath()); err == nil && st.Size() > 1<<20 {
