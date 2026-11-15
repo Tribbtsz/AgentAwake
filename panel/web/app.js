@@ -6,9 +6,44 @@ const call = (m, ...a) => window.mygo.call(`Api.${m}`, ...a);
 
 let page = 'status';
 let lastLeaseSig = '';
+const leaseItems = new Map(); // 租约行按 id 复用，新行才播放入场动画
 let offsetHeld = false;      // 手指/鼠标在滑条上，轮询不要覆盖显示值
 let maxHoursHeld = false;
 let firstPage = true;
+
+// ---------- Toast（成功/失败提示 + 加载态） ----------
+let toastTimer;
+let toastLoading = false;
+
+// showToast 显示一条提示；loading=true 时常驻并显示内置转圈图标，
+// 直到 hideToast 或下一条提示替换。toast 固定在底部，不占布局高度。
+function showToast(msg, loading = false, holdMs = 1800) {
+  clearTimeout(toastTimer);
+  toastLoading = loading;
+  $('toastSpinner').hidden = !loading;
+  $('toastText').textContent = msg;
+  const el = $('toast');
+  el.hidden = false;
+  void el.offsetWidth; // 让隐藏→显示的过渡生效
+  el.classList.add('show');
+  if (!loading) {
+    toastTimer = setTimeout(hideToast, holdMs);
+  }
+}
+
+function hideToast() {
+  toastLoading = false;
+  clearTimeout(toastTimer);
+  const el = $('toast');
+  el.classList.remove('show');
+  toastTimer = setTimeout(() => {
+    if (!el.classList.contains('show')) el.hidden = true;
+  }, 220);
+}
+
+function toast(msg) {
+  showToast(msg, false);
+}
 
 // 线性图标（hugeicons 风格，1.6 描边）
 const ICONS = {
@@ -149,21 +184,15 @@ $('promptReset').onclick = async () => {
 // ---------- 等待 / 异常反馈 ----------
 let pending = 0;
 
+// 加载态用底部 Toast 显示，不再在顶部插入进度条（那会挤动整个页面布局）
 function beginPending() {
   pending++;
-  for (const id of ['progress', 'progress2']) {
-    const el = $(id);
-    if (el) el.hidden = false;
-  }
+  if (pending === 1) showToast('正在处理…', true);
 }
+
 function endPending() {
   pending = Math.max(0, pending - 1);
-  if (pending === 0) {
-    for (const id of ['progress', 'progress2']) {
-      const el = $(id);
-      if (el) el.hidden = true;
-    }
-  }
+  if (pending === 0 && toastLoading) hideToast();
 }
 
 // 轻量包装：所有桥接调用都带等待指示
@@ -258,55 +287,74 @@ function renderChips(s) {
 }
 
 function renderLeases(s) {
-  const sig = JSON.stringify(s.leases.map(l => [l.id, l.active, l.detail, l.name]));
+  const sig = JSON.stringify(s.leases.map(l => [l.id, l.active, l.detail, l.name, l.mode]));
   if (sig === lastLeaseSig) return;
   lastLeaseSig = sig;
 
   const box = $('leases');
-  box.innerHTML = '';
+  const ordered = [];
+  const seen = new Set();
   for (const l of s.leases) {
-    const el = document.createElement('div');
-    el.className = 'lease' + (l.active ? '' : ' dead');
-    el.innerHTML = `<div class="lease-info">
-        <div class="lease-top"><span class="lease-name"></span><span class="lease-tag"></span></div>
-        <span class="lease-detail"></span>
-      </div>`;
-    el.querySelector('.lease-name').textContent = l.name;
-    el.querySelector('.lease-tag').textContent = l.mode === 'deadline' ? '定时' : '等完成';
-    el.querySelector('.lease-detail').textContent = l.detail || '';
-    if (l.active) {
+    seen.add(l.id);
+    let item = leaseItems.get(l.id);
+    if (!item) {
+      const el = document.createElement('div');
+      el.className = 'lease enter';
+      el.innerHTML = `<div class="lease-info">
+          <div class="lease-top"><span class="lease-name"></span><span class="lease-tag"></span></div>
+          <span class="lease-detail"></span>
+        </div>`;
+      item = {
+        el,
+        name: el.querySelector('.lease-name'),
+        tag: el.querySelector('.lease-tag'),
+        detail: el.querySelector('.lease-detail'),
+        btn: null,
+      };
+      // 入场动画只跑一次，结束后去掉 class，后续文字更新不会再触发。
+      // animationend 偶尔不触发（窗口切后台/减少动画）时用定时器兜底。
+      const clearEnter = () => el.classList.remove('enter');
+      el.addEventListener('animationend', clearEnter, { once: true });
+      setTimeout(clearEnter, 400);
+      leaseItems.set(l.id, item);
+    }
+    item.el.classList.toggle('dead', !l.active);
+    setText(item.name, l.name);
+    setText(item.tag, l.mode === 'deadline' ? '定时' : '等完成');
+    setText(item.detail, l.detail || '');
+    if (l.active && !item.btn) {
       const b = document.createElement('button');
       b.className = 'btn small';
       b.textContent = '完成';
       b.onclick = () => runAction(b, () => call('Release', l.id), '已通知完成');
-      el.appendChild(b);
+      item.el.appendChild(b);
+      item.btn = b;
+    } else if (!l.active && item.btn) {
+      item.btn.remove();
+      item.btn = null;
     }
-    box.appendChild(el);
+    ordered.push(item);
+  }
+
+  // 只在新行第一次插入时触发入场动画；已有行按顺序移动不会重播
+  ordered.forEach((item, i) => {
+    if (box.children[i] !== item.el) box.insertBefore(item.el, box.children[i] || null);
+  });
+  for (const [id, item] of leaseItems) {
+    if (!seen.has(id)) {
+      item.el.remove();
+      leaseItems.delete(id);
+    }
   }
 }
 
-// ---------- 提示 ----------
-let toastTimer;
-function toast(msg) {
-  const t = $('toast');
-  t.textContent = msg;
-  t.hidden = false;
-  t.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    t.classList.remove('show');
-    setTimeout(() => { t.hidden = true; }, 220);
-  }, 1800);
-}
-
 // ---------- 操作 ----------
-// 按钮执行中显示 pending，避免「点了没反应」的感觉
+// 按钮执行中只禁用防重复点击，不改文字（避免按钮行宽度变化），
+// 加载反馈统一交给底部 Toast。
 async function runAction(btn, fn, done) {
   if (btn.dataset.busy === '1') return;
   btn.dataset.busy = '1';
-  const prev = btn.textContent;
   btn.disabled = true;
-  btn.textContent = '…';
   beginPending();
   try {
     await fn();
@@ -318,7 +366,6 @@ async function runAction(btn, fn, done) {
     toast(msg.split('\n')[0].slice(0, 48) || '操作失败');
   } finally {
     btn.disabled = false;
-    btn.textContent = prev;
     btn.dataset.busy = '0';
     endPending();
     refresh();

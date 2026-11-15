@@ -19,7 +19,6 @@
     </header>
 
     <main id="pageStatus">
-      <div class="progress" id="progress" hidden><span></span></div>
       <div class="alert" id="alert" hidden>
         <span class="alert-text"></span>
         <button class="alert-close" id="alertClose" title="忽略">✕</button>
@@ -53,7 +52,6 @@
     </main>
 
     <main id="pageSettings" hidden>
-      <div class="progress" id="progress2" hidden><span></span></div>
       <h2 class="page-title">设置</h2>
 
       <div class="card">
@@ -115,7 +113,10 @@
       </div>
     </main>
 
-    <footer id="toast" class="toast" hidden></footer>
+    <footer id="toast" class="toast" hidden>
+      <span class="spinner" id="toastSpinner" hidden></span>
+      <span id="toastText"></span>
+    </footer>
   </div>
 
   <script src="app.js"></script>
