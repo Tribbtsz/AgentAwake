@@ -247,8 +247,15 @@ button.ghost.close:hover { color: var(--danger); }
 
 /* ---------- 状态页 ---------- */
 .status-card { display: flex; align-items: center; gap: 12px; }
-.status-text { display: flex; flex-direction: column; gap: 2px; }
+.status-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .status-text strong { font-size: 17px; font-weight: 600; }
+
+/* 右上角的「息屏」：贴着卡片右边缘，样式跟其他 ghost 按钮一致 */
+button.sleep {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  font-size: 11.5px;
+}
 
 /* 状态灯：柔和光晕 + 平滑切换 */
 .dot {

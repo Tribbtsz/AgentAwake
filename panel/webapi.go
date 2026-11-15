@@ -365,6 +365,16 @@ func (api Api) Stop() error {
 	return api.run("stop")
 }
 
+// SleepDisplay 手动关闭显示器（不锁屏、不睡眠）。系统自己的熄屏计时被别的
+// 进程压住时，用它直接黑屏；动一下鼠标就亮。
+func (api Api) SleepDisplay() error {
+	if api.a == nil {
+		return nil
+	}
+	logf("panel", "手动息屏")
+	return turnOffDisplay()
+}
+
 // hold 先预占一行让窗口长高，再执行 CLI；结果返回时用真实租约数替换预占，
 // 所以“保持中”的窗口高度在任务出现前就已经到位，不会再卡一下。
 func (api Api) hold(args ...string) error {
