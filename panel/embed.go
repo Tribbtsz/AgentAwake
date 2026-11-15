@@ -218,7 +218,7 @@ func (a *app) syncBarPresence() {
 		if barShouldShow() {
 			a.barSuppressed = false
 			a.applyPosition()
-			a.bar.ShowInactive()
+			a.showBar()
 		}
 		return
 	}
@@ -232,6 +232,7 @@ func (a *app) syncBarPresence() {
 		return
 	}
 	if isOccluded(h) {
+		dbg("胶囊被遮挡，重申 topmost")
 		procSetWindowPos.Call(h, hwndTopmost, 0, 0, 0, 0,
 			uintptr(swPNoMove|swPNoSize|swPNoActivate))
 	}
@@ -264,18 +265,31 @@ func shellBusy() bool {
 	return false
 }
 
-// isOccluded 判断窗口中心点是否被别的窗口盖住
+// isOccluded 判断窗口中心点是否被别的窗口盖住。
+// 注意 WindowFromPoint 返回的是盖在那里的**最子级**窗口（我们的胶囊是
+// MyGoSurface 子窗口），所以要用 GetAncestor 取根窗口再比。
 func isOccluded(h uintptr) bool {
 	var rc struct{ L, T, R, B int32 }
 	if r, _, _ := procGetWindowRect.Call(h, uintptr(unsafe.Pointer(&rc))); r == 0 {
 		return false
 	}
-	return windowFromPoint((rc.L+rc.R)/2, (rc.T+rc.B)/2) != h
+	at := windowFromPoint((rc.L+rc.R)/2, (rc.T+rc.B)/2)
+	if at == 0 {
+		return false
+	}
+	root, _, _ := procGetAncestor.Call(at, gaRoot)
+	return root != h && at != h
 }
 
+// windowFromPoint 取屏幕点上的窗口。注意 POINT 是**按值**传的（x64 一个
+// 寄存器，32 位下两个 DWORD）；传指针会让 API 读到垃圾坐标，结果永远判成
+// 「被遮挡」。
 func windowFromPoint(x, y int32) uintptr {
-	pt := struct{ X, Y int32 }{x, y}
-	r, _, _ := procWindowFromPoint.Call(uintptr(unsafe.Pointer(&pt)))
+	if unsafe.Sizeof(uintptr(0)) == 8 {
+		r, _, _ := procWindowFromPoint.Call(uintptr(uint32(x)) | uintptr(uint32(y))<<32)
+		return r
+	}
+	r, _, _ := procWindowFromPoint.Call(uintptr(uint32(x)), uintptr(uint32(y)))
 	return r
 }
 
@@ -414,7 +428,7 @@ func (a *app) checkTaskbar() {
 	a.positionOverTaskbar()
 	if a.cfg.ShowBar && barShouldShow() {
 		a.barSuppressed = false
-		a.bar.ShowInactive()
+		a.showBar()
 	}
 	fmt.Println("[AgentAwake] 任务栏嵌入失效，已退回覆盖模式")
 	dbg("任务栏嵌入失效，已退回覆盖模式")

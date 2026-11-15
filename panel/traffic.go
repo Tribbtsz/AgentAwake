@@ -1,9 +1,11 @@
 package main
 
-// traffic.go — 任务栏胶囊（网页渲染，覆盖在任务栏空白区上）
+// traffic.go — 任务栏胶囊的窗口与摆位
 //
-// 页面见 web/bar.html + web/bar.js：深色胶囊 + 顶部 1px 高光，
-// 点击打开面板。Go 只负责窗口尺寸、位置与状态推送。
+// 胶囊本身由 mygo 原生 ui 绘制（见 barnative.go）：深色圆角胶囊 + 顶部渐变高光，
+// 保持中时整块泛绿并呼吸。Go 只负责窗口尺寸、位置与状态。
+//
+// 窗口默认是透明的（真圆角）；只有实验性的嵌入模式用不透明 + 采样任务栏底色。
 
 import (
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 )
 
 // placeTrafficBar 上方模式：主屏右下角、任务栏上方。
@@ -24,6 +27,10 @@ func (a *app) placeTrafficBar() {
 }
 
 // barWidthFor 计算当前状态需要的胶囊宽度（中文约 12px/字，西文 7px）
+//
+// barNativePad 是原生文字比这套估算多出来的宽度：网页版 .pill 的实际内边距
+// 是 12+12（估算只算了 16），加上原生中文字宽约 13 而不是 12。实测「空闲」
+// 「保持中」正好差 20px，宁可多给一点内边距也不能让字挤出胶囊。
 func (a *app) barWidthFor() int {
 	label := a.statusLabel()
 	count := leaseCountText(activeCount(a.snap.Leases))
@@ -37,7 +44,7 @@ func (a *app) barWidthFor() int {
 			countW += 12
 		}
 	}
-	w := 20 + labelW + countW + 16 // 圆点 + 间距 + 左右内边距
+	w := 20 + labelW + countW + 16 + barNativePad // 圆点 + 间距 + 内边距 + 原生更正
 	if w < 88 {
 		w = 88
 	}
@@ -91,6 +98,17 @@ func (a *app) ensureBar() {
 	}
 	a.barW = a.barWidthFor()
 	w, h := a.currentBarSize()
+
+	// 嵌入模式（AGENTAWAKE_EMBED=1，实验性）：
+	//   · 子窗口没有 DWM 逐像素透明，只能退回「采样任务栏底色 + 不透明」；
+	//   · mygo 的 GPU 面在 SetParent 时会失效（画面全黑），必须先让窗口
+	//     画出来，再挂进任务栏。
+	embed := os.Getenv("AGENTAWAKE_EMBED") == "1" && findTrayHost() != 0
+	a.barBG = ""
+	if embed {
+		a.barBG = sampleTaskbarColor()
+	}
+
 	a.bar = mygo.NewWindow(mygo.WindowOptions{
 		Title:           "AgentAwake",
 		X:               -32000,
@@ -103,21 +121,36 @@ func (a *app) ensureBar() {
 		DisableResize:   true,
 		DisableShadow:   true,
 		UseContentSize:  true,
-		BackgroundColor: sampleTaskbarColor(),
-		URL:             "/bar.html",
+		Transparent:     !embed,
+		BackgroundColor: a.barBG,
+		Content:         ui.View(a.barView),
 	})
 	a.bar.OnClosed(func() { a.bar = nil })
-	dbg("ensureBar hwnd=%d size=%dx%d", a.bar.NativeHandle(), w, h)
+	dbg("ensureBar hwnd=%d size=%dx%d embed=%v bg=%q", a.bar.NativeHandle(), w, h, embed, a.barBG)
 
-	if os.Getenv("AGENTAWAKE_EMBED") == "1" && a.embedIntoTaskbar() {
-		a.embedded = true
+	if embed {
+		// 先画 0.7s 再挂：直接 SetParent 会让 GPU 面失效
+		time.AfterFunc(700*time.Millisecond, func() {
+			mygo.RunOnMain(func() {
+				if a.bar == nil {
+					return
+				}
+				if a.embedIntoTaskbar() {
+					a.embedded = true
+				} else {
+					a.embedded = false
+					a.overTaskbar = true
+					a.positionOverTaskbar()
+				}
+			})
+		})
 	} else {
 		a.embedded = false
 		a.overTaskbar = true
 		a.positionOverTaskbar()
 	}
 	if a.cfg.ShowBar {
-		a.bar.ShowInactive()
+		a.showBar()
 	} else {
 		a.bar.Hide()
 	}

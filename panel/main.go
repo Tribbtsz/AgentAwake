@@ -67,6 +67,10 @@ type app struct {
 	tray *mygo.Tray
 	bar  *mygo.Window
 
+	// 胶囊（原生 ui）：状态、窗口底色（嵌入模式才用）
+	barUI barUI
+	barBG string
+
 	embedded        bool      // 任务胶囊是否已嵌进任务栏（SetParent）
 	overTaskbar     bool      // 覆盖模式：顶层窗口压在任务栏空白区
 	barSuppressed   bool      // 任务栏被隐藏/全屏时临时收起胶囊
@@ -169,6 +173,9 @@ func main() {
 			{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Exit(0) }},
 		}))
 
+		a.updateBarState() // 先定好状态色再建窗口，避免首帧闪一下空闲灰
+		// 系统「减少动画」：首帧也按它来，别先淡入一次再停
+		a.barUI.still = mygo.Theme.Preferences().ReduceMotion
 		a.ensureBar()
 
 		if openOnStart {
@@ -239,7 +246,7 @@ func (a *app) pollLoop() {
 				a.tray.SetIcon(trayIcon(snap), false)
 				a.tray.SetToolTip(trayTip(snap))
 			}
-			a.pushBarState()
+			a.updateBarState()
 			a.syncBarSize()
 			a.fitPanel()
 		})
@@ -302,7 +309,7 @@ func (a *app) showPanel() {
 		a.bringPanelFront()
 		return
 	}
-	// 面板是网页（HTML/CSS）；托盘与任务栏任务胶囊仍是原生 Go
+	// 胶囊由 mygo 原生 ui 绘制（barnative.go）；只有面板是网页
 	startH := a.statusHeight()
 	if a.startPage == "settings" {
 		startH = settingsHeight

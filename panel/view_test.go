@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func newTestApp() *app {
@@ -74,6 +76,50 @@ func TestBarWidthFitsContent(t *testing.T) {
 	}
 	if idle < 60 || holding > 280 {
 		t.Errorf("宽度超出合理范围：%d / %d", idle, holding)
+	}
+}
+
+// TestBarClickOpensPanel 胶囊是原生 ui 画的，点它要能打开面板。
+// 用 headless Tester 走真实的事件路径（不需要窗口）。
+func TestBarClickOpensPanel(t *testing.T) {
+	a := newTestApp()
+	a.barW = a.barWidthFor()
+	tst := ui.NewTester(a.barView, a.barW, barHeight)
+	tst.Frame()
+	tst.ClickAt(float32(a.barW)/2, barHeight/2)
+	if a.barUI.clicks != 1 {
+		t.Fatalf("点击胶囊应触发一次打开面板，实际 %d 次", a.barUI.clicks)
+	}
+}
+
+// TestBarViewStates 三种状态都能画出来，且状态切换会更新胶囊。
+func TestBarViewStates(t *testing.T) {
+	a := newTestApp()
+	a.barW = a.barWidthFor()
+	tst := ui.NewTester(a.barView, a.barW, barHeight)
+	tst.Frame()
+
+	if !a.updateBarState() {
+		t.Fatal("首次刷新应报告状态变化")
+	}
+	for _, c := range []struct {
+		name string
+		set  func()
+		want int
+	}{
+		{"空闲", func() {}, barIdle},
+		{"保持中", func() { a.snap.Holding = true }, barOn},
+		{"出错", func() {
+			a.snap.Holding = false
+			a.snap.Err = "cli failed"
+		}, barErr},
+	} {
+		c.set()
+		a.updateBarState()
+		if a.barUI.kind != c.want {
+			t.Errorf("%s 时应为 kind=%d，得到 %d", c.name, c.want, a.barUI.kind)
+		}
+		tst.Frame()
 	}
 }
 

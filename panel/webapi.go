@@ -171,37 +171,10 @@ func (api Api) BarState() barStateDTO {
 	})
 }
 
-// barStateEvent Go 主动把小条状态推给页面（不依赖页面定时器，避免被节流）
-var barStateEvent = mygo.NewEvent[barStateDTO]("bar-state")
-
-// pushBarState 把当前状态推给任务胶囊页面（主线程调用）
-func (a *app) pushBarState() {
-	if a.bar == nil {
-		return
-	}
-	_ = barStateEvent.Emit(a.bar, Api{a: a}.BarState())
-}
-
-// BarDebug 前端调试输出（排查小条状态是否送达）
+// BarDebug 调试输出（旧版小条页面用它回报状态；原生胶囊不再需要，保留无害）
 func (api Api) BarDebug(msg string) bool {
 	dbg("%s", "bar: "+msg)
 	return true
-}
-
-// TaskbarColor 任务栏底色（小条页面用它当背景，消除圆角外的边角）
-func (api Api) TaskbarColor() string {
-	return sampleTaskbarColor()
-}
-
-// OpenPanel 小条被点击时打开面板
-func (api Api) OpenPanel() bool {
-	if api.a == nil {
-		return false
-	}
-	return onUI(func() bool {
-		api.a.showPanel()
-		return true
-	})
 }
 
 // InitialToast 仅在设置环境变量时返回演示文案，用于视觉验收
@@ -460,6 +433,8 @@ func (api Api) SetPulse(v bool) bool {
 	return onUI(func() bool {
 		api.a.cfg.Pulse = v
 		savePanelConfig(api.a.cfg)
+		// 呼吸是由绘制帧驱动的：立刻重绘一次，让胶囊马上切到静态绿/开始呼吸
+		api.a.invalidate()
 		return true
 	})
 }
@@ -544,7 +519,7 @@ func (a *app) applyBarVisibility() {
 	if a.cfg.ShowBar {
 		a.barSuppressed = false
 		a.applyPosition()
-		a.bar.ShowInactive()
+		a.showBar()
 	} else {
 		a.bar.Hide()
 	}
