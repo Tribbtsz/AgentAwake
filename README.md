@@ -46,16 +46,20 @@ awake stop                     # 立刻全部停止并恢复
 # 绑定自身进程：进程被杀/崩溃也会自动释放
 $lease = awake acquire -name "nightly-build" -followpid $PID -json | ConvertFrom-Json
 # ...干活...
-awake release -id $lease.id     # 主动通知「我完成了」
+awake release -key $lease.key     # 只释放自己的租约（推荐）
+# 或：awake release -id $lease.id
 ```
+
+每次申请都会返回一个 6 位**短密钥**（如 `5XFEHZ`）。多个 agent 同时工作时，
+用密钥释放只影响自己的租约；`release -all` / `release -name` 可能误伤别人。
 
 | 命令 | 作用 |
 |---|---|
-| `acquire -name x [-followpid n] [-timeouthours 12] [-ttlseconds n] [-json]` | 申请（等完成模式） |
-| `release -id x` / `-name x` / `-all` | 通知完成 |
+| `acquire -name x [-followpid n] [-timeouthours 12] [-ttlseconds n] [-json]` | 申请（等完成模式），返回 `id` 与 `key` |
+| `release -key x` / `-id x` / `-name x` / `-all` | 通知完成（优先用 `-key`） |
 | `extend -id x -for 30m` / `-until 07:00` / `-all` | 改成定时 |
 | `heartbeat -id x` | 给带 TTL 的租约续期 |
-| `status [-json]` | 查看状态 |
+| `status [-json]` | 查看状态（含密钥） |
 | `stop` | 释放全部并立即恢复 |
 
 时间写法：`30m` `90s` `2h` `1.5d` `30分钟` `2小时` `06:00` `2026-11-15T06:00`
@@ -65,9 +69,12 @@ awake release -id $lease.id     # 主动通知「我完成了」
 - **托盘图标**：只显示品牌图标，左键打开面板，右键「打开面板 / 设置 / 退出」。
 - **任务栏任务胶囊**：`● 保持中 租约 N`，叠在任务栏空白区，点击也打开面板；保持中泛绿并呼吸。
 - **面板**（420 宽竖屏）：状态页 + 设置页。
-  - 状态页：上方固定（状态、三个指标块、手动保持按钮），下方是动态租约列表。
-  - 设置页：任务胶囊位置、显示开关、agent 最长保持、呼吸开关。
-    窗口高度按内容自适应，不会截断最后一项。
+  - 状态页：上方固定（状态、三个指标块、手动保持按钮），下方是动态租约列表（显示租约密钥）。
+  - 设置页：任务胶囊位置、显示开关、agent 最长保持、呼吸开关、Agent 提示词。
+  - 标题栏「复制提示词」一键把英文使用说明（如何申请、用密钥清理自己的租约）复制到剪贴板；
+    内容可在设置页编辑，默认只读，点「编辑」后才能改。
+  - 设置页窗口高度按内容自适应，最高 800 DIP；再长就整页滚动（不显示滚动条），
+    提示词区域平铺展开，不再单独出滚动条。
   - 界面是内嵌 HTML/CSS（`go:embed` + `mygo.SetFrontend`），不需要 Bun/npm。
 - 标题栏右侧是构建标记（`panel.exe` 的写入时间，如 `1115-2045`），用来确认「你看到的是哪一版」。
 
@@ -82,12 +89,19 @@ panel\build.cmd      :: 只构建面板（-H=windowsgui，运行时不带控制�
 ## 性能
 
 面板**不轮询子进程**：状态直接读租约 JSON、`runtime.json` 和注册表。
+旧 PowerShell 实现每 5 秒 spawn 两次 `pwsh`（单核约 73%），现在空闲时几乎为零。
 
-| 指标 | 旧实现（每 5 秒 spawn 2 次 pwsh） | 现在 |
-|---|---|---|
-| CPU | ≈73% 单核（单次 PowerShell 冷启动实测 1.8 秒） | ≈0.2% 单核 |
-| 子进程 | 持续产生 | 0（仅点按钮/agent 调用时） |
-| 内存 | 73 MB | 常驻 74 MB；面板打开时约 91 MB（WebView2） |
+| 指标 | 实测（本机 125% 缩放） |
+|---|---|
+| 空闲 CPU（托盘 + 胶囊） | <0.1% 整机 |
+| 保持中 CPU（胶囊呼吸） | ≈0.04% 整机（8 秒采样） |
+| 状态轮询产生的子进程 | 0（只有点按钮/agent 调用时才跑 `awake.exe`） |
+| `panel.exe` 内存 | 托盘常驻 ≈29–35 MB 工作集（私有 ≈54 MB） |
+| WebView2 | 胶囊常驻 ≈6 个进程、≈350–400 MB 工作集（含共享 GPU 内存）；面板打开时多 1 个 renderer |
+
+任务栏胶囊是网页（需要圆角/渐变/呼吸效果），因此常驻拉起 WebView2，这是内存
+大头。胶囊呼吸改成离散的透明度切换（不再用 60fps 的 `filter` 动画），保持中
+的 CPU 从约 1.4% 降到 0.04%。面板状态块不闪烁。
 
 ## 测试
 
@@ -125,7 +139,7 @@ awake acquire ──写──> leases\<id>.json
 |---|---|
 | `%LOCALAPPDATA%\AgentAwake\leases\` | 租约文件，一张一个 |
 | `%LOCALAPPDATA%\AgentAwake\runtime.json` | 守护进程状态与原始电源值快照 |
-| `%LOCALAPPDATA%\AgentAwake\panel.json` | 界面设置（位置、显示、上限、面板位置） |
+| `%LOCALAPPDATA%\AgentAwake\panel.json` | 界面设置（位置、显示、上限、面板位置、Agent 提示词） |
 | `%LOCALAPPDATA%\AgentAwake\awake.log` | 日志 |
 
 ## 不做的事
