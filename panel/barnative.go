@@ -16,6 +16,7 @@ package main
 import (
 	"math"
 	"time"
+	"unsafe"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -44,6 +45,10 @@ const (
 	// 两者的间距就是肉眼看到的颜色变化幅度，想更明显就拉开。
 	barGlowLow  = 0.09
 	barGlowHigh = 0.46
+
+	// 超过这么久没有键鼠输入就不再刷呼吸帧：屏幕多半已经黑了，
+	// 没人看的时候还以 20fps 空转纯属浪费电。任何输入都会让它恢复。
+	barGlowIdle = 2 * time.Minute
 )
 
 const (
@@ -64,6 +69,12 @@ type barUI struct {
 	still bool
 	// clicks 记录点击次数，供测试断言（生产里没有意义）
 	clicks int
+	// glowFrames 是呼吸绘制帧的计数，只在调试时用来核对帧率
+	glowFrames int
+	// builds 是 view 重建次数，和 glowFrames 对比就能看出是不是每帧都在重建
+	builds int
+	// paused 表示呼吸因为「太久没人动」停了；有人回来时由 resumeBarGlow 恢复
+	paused bool
 }
 
 var (
@@ -125,9 +136,30 @@ func barGlow(p *ui.Painter) float32 {
 	return float32(0.5 - 0.5*math.Cos(2*math.Pi*t/period))
 }
 
+var (
+	procGetLastInputInfo = user32.NewProc("GetLastInputInfo")
+	procGetTickCount64   = kernel32.NewProc("GetTickCount64")
+)
+
+// idleTime 距离上一次键盘/鼠标输入过了多久（屏幕熄灭、没人看的时候靠它停帧）。
+func idleTime() time.Duration {
+	var li struct {
+		Size uint32
+		Time uint32
+	}
+	li.Size = 8
+	if r, _, _ := procGetLastInputInfo.Call(uintptr(unsafe.Pointer(&li))); r == 0 {
+		return 0
+	}
+	tick, _, _ := procGetTickCount64.Call()
+	// 两者都是 32 位毫秒，回绕也成立
+	return time.Duration(uint32(tick)-li.Time) * time.Millisecond
+}
+
 // barView 画一帧胶囊。窗口底色在叠加模式是透明的（真圆角），
 // 嵌入模式才用采样的任务栏底色（子窗口没有逐像素透明）。
 func (a *app) barView(c *ui.Context) {
+	a.barUI.builds++
 	// 系统「减少动画」：开启时保持静态绿色
 	a.barUI.still = c.Preferences().ReduceMotion
 
@@ -163,9 +195,12 @@ func (a *app) barView(c *ui.Context) {
 			Height(pillHeight).
 			Radius(pillHeight / 2).
 			LinearGradient(ui.LinearGradient{Angle: 180, Stops: barStops(a.barUI.kind)}).
-			Draw(a.barGlowFrame).
-			Opacity(a.barUI.appear).
-			Center()
+			Draw(a.barGlowFrame)
+		// 只有淡入过程中才需要合成图层；完全显示时别多这一层
+		if a.barUI.appear < 1 {
+			pill.Opacity(a.barUI.appear)
+		}
+		pill.Center()
 
 		pill.Children(func() {
 			row := ui.Row(c).Center().Gap(pillGap).Padding(0, pillPadX)
@@ -189,13 +224,39 @@ func (a *app) barGlowFrame(p *ui.Painter, r ui.Rect) {
 	if a.barUI.kind != barOn {
 		return
 	}
+	// 调试：每 100 帧报一次，用来确认绘制帧率（正常应为 ~20fps）
+	if a.barUI.glowFrames++; a.barUI.glowFrames%100 == 0 {
+		dbg("glow 第 %d 帧，builds=%d appear=%.2f 尺寸 %dx%d",
+			a.barUI.glowFrames, a.barUI.builds, a.barUI.appear, a.barW, barHeight)
+	}
 	glow := float32(0) // 0 = 低位静态绿
-	if a.cfg.Pulse && !a.barUI.still {
+	animate := a.cfg.Pulse && !a.barUI.still
+	if animate && idleTime() >= barGlowIdle {
+		// 没人在看：停掉呼吸帧，保持静态绿（不请求任何绘制帧）
+		animate = false
+		a.barUI.paused = true
+	}
+	if animate {
+		a.barUI.paused = false
 		glow = barGlow(p)
 		p.AnimationFrameRate(barGlowFPS)
 	}
 	alpha := barGlowLow + (barGlowHigh-barGlowLow)*glow
 	p.Fill(r, barGreen.Alpha(alpha), pillHeight/2)
+}
+
+// resumeBarGlow 呼吸因为「太久没人动」停掉之后，等到有人回来再把它点起来。
+// 由 keepOnTop 的 300ms 轮询调用：没有绘制帧的时候只能靠它发现输入。
+func (a *app) resumeBarGlow() {
+	if !a.barUI.paused || a.bar == nil || !a.cfg.Pulse || a.barUI.still {
+		return
+	}
+	if idleTime() >= barGlowIdle {
+		return
+	}
+	a.barUI.paused = false
+	dbg("呼吸恢复（空闲 %v）", idleTime())
+	a.invalidate()
 }
 
 // updateBarState 刷新胶囊的状态色与文案（主线程）。

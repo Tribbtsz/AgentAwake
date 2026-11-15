@@ -206,6 +206,8 @@ func (a *app) keepOnTop() {
 	for {
 		time.Sleep(300 * time.Millisecond)
 		mygo.RunOnMain(a.syncBarPresence)
+		// 呼吸停掉之后没有绘制帧，靠这个 300ms 轮询发现「人回来了」
+		mygo.RunOnMain(a.resumeBarGlow)
 	}
 }
 
