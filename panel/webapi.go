@@ -295,9 +295,9 @@ func (api Api) CopyText(text string) bool {
 const (
 	panelWidth     = 420
 	panelMinHeight = 240
-	// 面板最大高度（DIP）：设置页内容再长也停在这里，由页面滚动，
-	// 不再让提示词区域自己出滚动条。实际还会被屏幕工作区夹一次。
-	panelMaxHeight = 800
+	// 首页和设置页共用的最大高度（DIP）：取原来首页上限 544 与设置页上限 800 的中间值。
+	// 首页随租约增多最多长到这里，设置页也最多长到这里，再长就整页滚动。
+	panelMaxHeight = 672
 	// settingsHeight 是设置页的首帧高度；页面量好真实内容高度后会调用
 	// FitHeight 修正，避免窗口打开瞬间底部被裁掉。
 	settingsHeight = 512
@@ -349,13 +349,15 @@ func (api Api) FitHeight(h int) bool {
 	})
 }
 
-// statusHeight 状态页高度 = 固定区 + 租约行数（最多算 3 行）
+// statusHeight 状态页高度 = 固定区 + 租约行数，和设置页共用 panelMaxHeight。
+// 操作进行中用 reservedRows 先占一行，窗口提前长高，结果出现时不再跳。
 func (a *app) statusHeight() int {
-	n := len(a.snap.Leases)
-	if n > 3 {
-		n = 3
+	n := len(a.snap.Leases) + a.reservedRows
+	h := 352 + n*64
+	if h > panelMaxHeight {
+		h = panelMaxHeight
 	}
-	return 352 + n*64
+	return h
 }
 
 // fitPanel 状态变化后按内容调整窗口高度
@@ -372,14 +374,14 @@ func (api Api) HoldMinutes(m int) error {
 	if m <= 0 {
 		m = 30
 	}
-	return api.run("hold", "-For", fmt.Sprintf("%dm", m), "-Name", "manual")
+	return api.hold("hold", "-For", fmt.Sprintf("%dm", m), "-Name", "manual")
 }
 
 func (api Api) HoldUntil(hhmm string) error {
 	if hhmm == "" {
 		hhmm = "06:00"
 	}
-	return api.run("hold", "-Until", hhmm, "-Name", "manual")
+	return api.hold("hold", "-Until", hhmm, "-Name", "manual")
 }
 
 func (api Api) Release(id string) error {
@@ -390,12 +392,43 @@ func (api Api) Stop() error {
 	return api.run("stop")
 }
 
-// run 执行一次 CLI 动作并刷新状态。失败时把 CLI 的输出交给页面显示，
-// 而不是只写进一个没人看的字段。
+// hold 先预占一行让窗口长高，再执行 CLI；结果返回时用真实租约数替换预占，
+// 所以“保持中”的窗口高度在任务出现前就已经到位，不会再卡一下。
+func (api Api) hold(args ...string) error {
+	api.a.update(func() {
+		api.a.reservedRows++
+		api.a.fitPanel()
+	})
+	out, err := runCLI(args...)
+	return api.finish(out, err, true)
+}
+
+// run 执行一次 CLI 动作（释放/停止），完成后立即按最新租约数调整高度。
 func (api Api) run(args ...string) error {
 	out, err := runCLI(args...)
+	return api.finish(out, err, false)
+}
+
+// finish 刷新快照、吃掉预留行，并把失败时 CLI 的输出交给页面显示。
+// 增高：预占行已经先把窗口长高，这里只需替换成真实租约，不再跳。
+// 缩短：等页面把行删掉（约 80ms）再收窗口，避免先缩窗口留下空白。
+func (api Api) finish(out string, err error, reserved bool) error {
 	snap := readSnapshot()
-	api.a.update(func() { api.a.snap = snap })
+	grew := reserved && err == nil
+	api.a.update(func() {
+		if reserved && api.a.reservedRows > 0 {
+			api.a.reservedRows--
+		}
+		api.a.snap = snap
+		if grew {
+			api.a.fitPanel()
+		}
+	})
+	if !grew {
+		time.AfterFunc(80*time.Millisecond, func() {
+			api.a.update(api.a.fitPanel)
+		})
+	}
 	if err == nil {
 		return nil
 	}

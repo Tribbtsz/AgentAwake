@@ -136,6 +136,35 @@ func TestEvaluateLeaseRules(t *testing.T) {
 	}
 }
 
+func TestStatusHeightReservedRows(t *testing.T) {
+	a := newTestApp()
+	if got := a.statusHeight(); got != 352 {
+		t.Errorf("无租约时高度应为 352，得到 %d", got)
+	}
+	a.snap.Leases = []leaseView{{}, {}}
+	if got := a.statusHeight(); got != 352+2*64 {
+		t.Errorf("2 个租约时高度应为 %d，得到 %d", 352+2*64, got)
+	}
+	// 操作进行中先预占一行：任务还没出现，窗口已经长高
+	a.reservedRows = 1
+	if got := a.statusHeight(); got != 352+3*64 {
+		t.Errorf("预占 1 行后高度应为 %d，得到 %d", 352+3*64, got)
+	}
+	// 首页和设置页共用上限，最多 672
+	a.snap.Leases = make([]leaseView, 6)
+	a.reservedRows = 0
+	if got := a.statusHeight(); got != panelMaxHeight {
+		t.Errorf("超过上限时应为 %d，得到 %d", panelMaxHeight, got)
+	}
+	if panelMaxHeight != 672 {
+		t.Errorf("共用上限应为 672，得到 %d", panelMaxHeight)
+	}
+	a.reservedRows = 3
+	if got := a.statusHeight(); got != panelMaxHeight {
+		t.Errorf("预占行也不应突破上限，得到 %d", got)
+	}
+}
+
 func TestPromptDefaultAndCustom(t *testing.T) {
 	a := newTestApp()
 	api := Api{a: a}

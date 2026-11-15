@@ -72,6 +72,7 @@ type app struct {
 	barSuppressed   bool      // 任务栏被隐藏/全屏时临时收起胶囊
 	barW            int       // 任务栏胶囊宽度（跟随内容）
 	page            panelPage // 当前页：状态 / 设置
+	reservedRows    int       // 操作进行中预占的租约行数（先长高，避免结果出现时跳一下）
 	settingsH       int       // 设置页量出的内容高度（0 表示还没量过）
 	startPage       string    // 启动时打开的页面
 	debugToast      string    // 视觉验收用：启动时弹一条 toast
