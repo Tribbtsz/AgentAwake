@@ -149,7 +149,18 @@ awake acquire ──写──> leases\<id>.json
 | `%LOCALAPPDATA%\AgentAwake\leases\` | 租约文件，一张一个 |
 | `%LOCALAPPDATA%\AgentAwake\runtime.json` | 守护进程状态与原始电源值快照 |
 | `%LOCALAPPDATA%\AgentAwake\panel.json` | 界面设置（位置、显示、上限、面板位置、Agent 提示词） |
-| `%LOCALAPPDATA%\AgentAwake\awake.log` | 日志 |
+| `%LOCALAPPDATA%\AgentAwake\awake.log` | 日志（1 MiB 轮转，托盘右键「打开日志」可打开） |
+
+## 日志
+
+单文件追加，一行一条 `时间  [来源]  内容`，来源有 `awake`（命令行）、
+`supervisor`（守护进程）、`panel`（托盘/面板）。超过 1 MiB 轮转成
+`awake.log.old`，一共最多占 2 MiB——正常一天几十条、十万分之一条的量级，
+够存很久。托盘右键「打开日志」用记事本打开。
+
+租约的 key 会写进日志：它本来就在 `leases\*.json` 里（同目录、同权限），
+日志没有扩大暴露面，而人要靠它把日志和界面上显示的那串对上号。
+不过日志仍属敏感信息，**不要贴给 agent、也不要贴进 issue**。
 
 ## 不做的事
 
