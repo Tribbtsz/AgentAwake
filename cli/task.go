@@ -124,12 +124,18 @@ func registerWatchdogTask() {
 	if taskExists() && taskPointsToUs() {
 		return
 	}
-	xmlPath := filepath.Join(os.TempDir(), "agentawake-watchdog.xml")
+	f, err := os.CreateTemp("", "agentawake-watchdog-*.xml")
+	if err != nil {
+		logf("awake", "写任务定义失败: %v", err)
+		return
+	}
+	xmlPath := f.Name()
+	f.Close()
+	defer os.Remove(xmlPath)
 	if err := writeUTF16File(xmlPath, taskXML()); err != nil {
 		logf("awake", "写任务定义失败: %v", err)
 		return
 	}
-	defer os.Remove(xmlPath)
 	if out, err := schtasks("/Create", "/TN", taskName, "/XML", xmlPath, "/F"); err != nil {
 		logf("awake", "注册巡检任务失败: %v %s", err, strings.TrimSpace(out))
 	}

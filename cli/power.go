@@ -101,12 +101,27 @@ func powercfgPath() string {
 	return filepath.Join(root, "System32", "powercfg.exe")
 }
 
-func setPowerValue(t powerTarget, ac bool, value int) {
+// setPowerValueFor 把某一项设置写到指定电源方案（空串 = 当前方案）。
+// 恢复时必须指定当初记录的方案 GUID：用户中途换方案后，SCHEME_CURRENT
+// 指向的已经不是修改过的那个方案了。
+func setPowerValueFor(scheme string, t powerTarget, ac bool, value int) {
+	_, _ = runHidden(powercfgPath(), powerValueArgs(scheme, t, ac, value)...)
+}
+
+// powerValueArgs 组装 powercfg 参数，单独出来便于测试
+func powerValueArgs(scheme string, t powerTarget, ac bool, value int) []string {
 	flag := "/setacvalueindex"
 	if !ac {
 		flag = "/setdcvalueindex"
 	}
-	_, _ = runHidden(powercfgPath(), flag, "SCHEME_CURRENT", t.Sub, t.Setting, fmt.Sprint(value))
+	if scheme == "" {
+		scheme = "SCHEME_CURRENT"
+	}
+	return []string{flag, scheme, t.Sub, t.Setting, fmt.Sprint(value)}
+}
+
+func setPowerValue(t powerTarget, ac bool, value int) {
+	setPowerValueFor("", t, ac, value)
 }
 
 // applyKeep 把睡眠/休眠改成「从不」，并让当前方案生效
@@ -118,7 +133,7 @@ func applyKeep() {
 	_, _ = runHidden(powercfgPath(), "/setactive", "SCHEME_CURRENT")
 }
 
-// restoreSnapshot 按快照恢复原值
+// restoreSnapshot 按快照恢复原值（写回快照记录的那个方案）
 func restoreSnapshot(snap *powerSnapshot) bool {
 	if snap == nil || len(snap.Settings) == 0 {
 		return false
@@ -129,10 +144,10 @@ func restoreSnapshot(snap *powerSnapshot) bool {
 			continue
 		}
 		if saved.AC >= 0 {
-			setPowerValue(t, true, saved.AC)
+			setPowerValueFor(snap.Scheme, t, true, saved.AC)
 		}
 		if saved.DC >= 0 {
-			setPowerValue(t, false, saved.DC)
+			setPowerValueFor(snap.Scheme, t, false, saved.DC)
 		}
 	}
 	_, _ = runHidden(powercfgPath(), "/setactive", "SCHEME_CURRENT")

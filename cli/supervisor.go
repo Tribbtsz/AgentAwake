@@ -102,10 +102,26 @@ func runSupervisor() int {
 				rt.LastHeal = stamp(now)
 				lastHeal = now
 				logf("supervisor", "进入保持模式（%d 个租约），已改为不休眠", len(active))
-			} else if now.Sub(lastHeal) >= healPeriod {
-				applyKeep()
-				rt.LastHeal = stamp(now)
-				lastHeal = now
+			} else {
+				migrated := false
+				if snap := rt.Snapshot; snap != nil && snap.Scheme != "" {
+					if cur := activeScheme(); cur != "" && cur != snap.Scheme {
+						// 用户中途换了电源方案：旧方案恢复原值，新方案重新记录并保持，
+						// 否则会把恢复值写到错误的方案上。
+						logf("supervisor", "电源方案切换 %s -> %s，迁移保持状态", snap.Scheme, cur)
+						restoreSnapshot(snap)
+						rt.Snapshot = captureSnapshot()
+						applyKeep()
+						rt.LastHeal = stamp(now)
+						lastHeal = now
+						migrated = true
+					}
+				}
+				if !migrated && now.Sub(lastHeal) >= healPeriod {
+					applyKeep()
+					rt.LastHeal = stamp(now)
+					lastHeal = now
+				}
 			}
 
 			setExecutionState(esContinuous | esSystemRequired)
