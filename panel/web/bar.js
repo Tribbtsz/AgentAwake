@@ -4,6 +4,31 @@ const $ = (id) => document.getElementById(id);
 const call = (m, ...a) => window.mygo.call(`Api.${m}`, ...a);
 
 let last = '';
+let pulseTimer = null;
+let pulseHigh = false;
+const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+// 呼吸：每 1200ms 切换一次目标透明度。用离散切换而不是 60fps 的 CSS
+// 动画，透明置顶窗口里 CPU 差一个数量级。减少动画偏好下只保留静态绿色。
+function setPulse(on) {
+  const pill = $('pill');
+  if (!on) {
+    if (pulseTimer) {
+      clearInterval(pulseTimer);
+      pulseTimer = null;
+    }
+    pill.classList.remove('on', 'breathe');
+    return;
+  }
+  pill.classList.add('on');
+  if (reduceMotion || pulseTimer) return;
+  pulseHigh = false;
+  pill.classList.remove('breathe');
+  pulseTimer = setInterval(() => {
+    pulseHigh = !pulseHigh;
+    pill.classList.toggle('breathe', pulseHigh);
+  }, 1200);
+}
 
 // 胶囊宽度 = 窗口宽度 - 两侧各 8px 留白（WebView2 不支持 max-content 收缩）
 function fitPill() {
@@ -34,7 +59,7 @@ function apply(s) {
   $('label').textContent = s.label;
   $('count').textContent = s.count;
   // 保持中且开启呼吸：整块胶囊泛绿并起伏
-  $('pill').classList.toggle('on', !!(s.holding && s.pulse));
+  setPulse(!!(s.holding && s.pulse));
 }
 
 async function refresh() {

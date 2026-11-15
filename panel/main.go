@@ -60,10 +60,8 @@ func runCLI(args ...string) (string, error) {
 // ---------- 应用 ----------
 
 type app struct {
-	snap  snapshot
-	cfg   panelConfig
-	err   string
-	toast string // 最近一次操作结果
+	snap snapshot
+	cfg  panelConfig
 
 	win  *mygo.Window
 	tray *mygo.Tray
@@ -71,6 +69,7 @@ type app struct {
 
 	embedded        bool      // 任务胶囊是否已嵌进任务栏（SetParent）
 	overTaskbar     bool      // 覆盖模式：顶层窗口压在任务栏空白区
+	barSuppressed   bool      // 任务栏被隐藏/全屏时临时收起胶囊
 	barW            int       // 任务栏胶囊宽度（跟随内容）
 	page            panelPage // 当前页：状态 / 设置
 	settingsH       int       // 设置页量出的内容高度（0 表示还没量过）
@@ -87,11 +86,6 @@ const (
 	pageSettings
 )
 
-func (a *app) refresh() {
-	a.snap = readSnapshot()
-	a.invalidate()
-}
-
 func (a *app) invalidate() {
 	if a.bar != nil {
 		a.bar.Invalidate()
@@ -101,34 +95,19 @@ func (a *app) invalidate() {
 	}
 }
 
-// update 在主线程改状态并重绘所有窗口
+// update 在主线程改状态并重绘所有窗口。
+// 调用方可能在任意 goroutine（CLI 动作、轮询），所以整段都放到主线程，
+// 连读取 a.win / a.bar 也不例外。
 func (a *app) update(fn func()) {
-	if a.win != nil {
-		a.win.Update(fn)
-	} else {
-		mygo.RunOnMain(fn)
-	}
-	if a.bar != nil {
-		a.bar.Invalidate()
-	}
-}
-
-func (a *app) act(args ...string) {
-	go func() {
-		out, err := runCLI(args...)
-		a.update(func() {
-			a.toast = strings.TrimSpace(out)
-			if err != nil {
-				a.err = fmt.Sprintf("%v\n%s", err, strings.TrimSpace(out))
-			} else {
-				a.err = ""
-			}
-		})
-		a.update(func() { a.snap = readSnapshot() })
-	}()
+	mygo.RunOnMain(func() {
+		fn()
+		a.invalidate()
+	})
 }
 
 func main() {
+	cliOK = cliFound()
+
 	a := &app{}
 	a.cfg = loadPanelConfig()
 	a.snap = readSnapshot()
@@ -146,6 +125,24 @@ func main() {
 		}
 	}
 
+	// 单实例：面板、托盘、任务栏胶囊都只应该有一份。
+	mygo.App.SetName("AgentAwake")
+	if !mygo.App.RequestSingleInstanceLock() {
+		return // 参数已经转交给正在运行的实例
+	}
+	mygo.App.OnSecondInstance(func(args []string, _ string) {
+		mygo.RunOnMain(func() {
+			if !mygo.App.IsReady() {
+				return // 启动瞬间：别在 UI 循环就绪前建窗口
+			}
+			if wantsSettings(args) {
+				a.openSettings()
+			} else {
+				a.showPanel()
+			}
+		})
+	})
+
 	mygo.App.WhenReady(func() {
 		// 托盘应用：窗口全关时不退出进程，保持托盘与胶囊常驻
 		mygo.App.OnWindowAllClosed(func() {})
@@ -160,6 +157,7 @@ func main() {
 		})
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "托盘创建失败:", err)
+			dbg("托盘创建失败: %v", err)
 		}
 		a.tray = tray
 		a.tray.OnClick(func() { a.showPanel() })
@@ -177,13 +175,36 @@ func main() {
 		}
 
 		go a.pollLoop()
-		go a.pulseLoop()
 	})
 
 	if err := mygo.App.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		dbg("App.Run 失败: %v", err)
 		os.Exit(1)
 	}
+}
+
+// wantsSettings 判断转交过来的命令行是否要求直接打开设置页
+func wantsSettings(args []string) bool {
+	for _, arg := range args {
+		if arg == "--settings" || arg == "-settings" {
+			return true
+		}
+	}
+	return false
+}
+
+// cliOK 面板启动时 awake.exe 是否可见。找不到时在状态页提示，
+// 而不是让按钮静默失败。
+var cliOK bool
+
+func cliFound() bool {
+	p := cliPath()
+	if st, err := os.Stat(p); err == nil && !st.IsDir() {
+		return true
+	}
+	_, err := exec.LookPath(p)
+	return err == nil
 }
 
 // pollLoop 只读本地文件与注册表，开销是微秒级；2 秒一次足够
@@ -203,12 +224,14 @@ func stampFromExe() string {
 }
 
 func (a *app) pollLoop() {
+	last := a.snap
 	for {
 		time.Sleep(2 * time.Second)
 		snap := readSnapshot()
-		if sameSnapshot(a.snap, snap) {
+		if sameSnapshot(last, snap) {
 			continue
 		}
+		last = snap
 		a.update(func() {
 			a.snap = snap
 			if a.tray != nil {
@@ -222,12 +245,12 @@ func (a *app) pollLoop() {
 	}
 }
 
-// pulseLoop 已移除：用户要求不要托盘图标闪烁
-func (a *app) pulseLoop() {}
-
 // sameSnapshot 判断两次状态是否一致（只比会影响界面显示的部分）
 func sameSnapshot(a, b snapshot) bool {
 	if a.Holding != b.Holding || len(a.Leases) != len(b.Leases) || a.Err != b.Err {
+		return false
+	}
+	if a.Power != b.Power || a.SupervisorPID != b.SupervisorPID {
 		return false
 	}
 	for i := range a.Leases {
@@ -235,9 +258,15 @@ func sameSnapshot(a, b snapshot) bool {
 		if x.ID != y.ID || x.Active != y.Active || x.Name != y.Name || x.StateText != y.StateText {
 			return false
 		}
-		// 定时租约的剩余时间按分钟取整比较，避免每秒都算「变了」
-		if x.Mode == "deadline" && int(x.Remaining.Minutes()) != int(y.Remaining.Minutes()) {
-			return false
+		// 定时租约的剩余时间：平时按分钟比较，最后一分钟按秒，倒计时才动
+		if x.Mode == "deadline" {
+			if x.Remaining < 2*time.Minute || y.Remaining < 2*time.Minute {
+				if int(x.Remaining.Seconds()) != int(y.Remaining.Seconds()) {
+					return false
+				}
+			} else if int(x.Remaining.Minutes()) != int(y.Remaining.Minutes()) {
+				return false
+			}
 		}
 	}
 	return true
@@ -305,7 +334,8 @@ func (a *app) showPanel() {
 	}()
 }
 
-// placePanel 首次打开时居中；之后沿用用户自己拖到的位置
+// placePanel 首次打开时居中；之后沿用用户自己拖到的位置。
+// 保存的位置可能来自已拔掉的显示器，此时退回居中，避免面板跑到屏幕外。
 func (a *app) placePanel() {
 	if a.win == nil {
 		return
@@ -314,27 +344,47 @@ func (a *app) placePanel() {
 	if h == 0 {
 		return
 	}
-	if a.cfg.PanelX != 0 || a.cfg.PanelY != 0 {
-		procSetWindowPos.Call(h, hwndInsertAfter,
-			uintptr(a.cfg.PanelX), uintptr(a.cfg.PanelY), 0, 0,
-			uintptr(swPNoSize|swPNoActivate))
-		return
-	}
-	cw, _, _ := procGetSystemMetrics.Call(0) // SM_CXSCREEN
-	ch, _, _ := procGetSystemMetrics.Call(1) // SM_CYSCREEN
 	var rc struct{ L, T, R, B int32 }
 	if r, _, _ := procGetWindowRect.Call(h, uintptr(unsafe.Pointer(&rc))); r == 0 {
 		return
 	}
 	w := int(rc.R - rc.L)
 	hh := int(rc.B - rc.T)
-	x := (int(cw) - w) / 2
-	y := (int(ch) - hh) / 2
-	if y < 0 {
-		y = 0
+
+	x, y := 0, 0
+	if (a.cfg.PanelX != 0 || a.cfg.PanelY != 0) && panelOnScreen(a.cfg.PanelX, a.cfg.PanelY, w, hh) {
+		x, y = a.cfg.PanelX, a.cfg.PanelY
+	} else {
+		cw, _, _ := procGetSystemMetrics.Call(0) // SM_CXSCREEN
+		ch, _, _ := procGetSystemMetrics.Call(1) // SM_CYSCREEN
+		x = (int(cw) - w) / 2
+		y = (int(ch) - hh) / 2
+		if y < 0 {
+			y = 0
+		}
 	}
 	procSetWindowPos.Call(h, hwndInsertAfter, uintptr(x), uintptr(y), 0, 0,
 		uintptr(swPNoSize|swPNoActivate))
+}
+
+// panelOnScreen 判断窗口左上角是否还落在虚拟桌面里（至少留 120×80 可见）
+func panelOnScreen(x, y, w, h int) bool {
+	sm := func(i int) int {
+		v, _, _ := procGetSystemMetrics.Call(uintptr(i))
+		return int(int32(v))
+	}
+	vx, vy := sm(76), sm(77) // SM_XVIRTUALSCREEN / SM_YVIRTUALSCREEN
+	vw, vh := sm(78), sm(79) // SM_CXVIRTUALSCREEN / SM_CYVIRTUALSCREEN
+	if vw <= 0 || vh <= 0 {
+		return true
+	}
+	if w > vw {
+		w = vw
+	}
+	if h > vh {
+		h = vh
+	}
+	return x+min(w, 120) > vx && x < vx+vw && y+min(h, 80) > vy && y < vy+vh
 }
 
 // rememberPanelPos 关闭时记住用户放的位置
@@ -440,8 +490,6 @@ func spanText(d time.Duration) string {
 	}
 	return fmt.Sprintf("%d 秒", int(d.Seconds())+1)
 }
-
-func (a *app) holding() bool { return a.snap.Holding }
 
 func (a *app) statusLabel() string {
 	if a.snap.Err != "" && !a.snap.Holding {

@@ -31,6 +31,7 @@ func runtimePath() string { return filepath.Join(dataDir(), "runtime.json") }
 
 type lease struct {
 	ID          string `json:"id"`
+	Key         string `json:"key"`
 	Name        string `json:"name"`
 	Mode        string `json:"mode"` // deadline | release
 	Deadline    string `json:"deadline"`
@@ -234,14 +235,22 @@ func readSnapshot() snapshot {
 	}
 	s.Leases = leases
 	s.Power = readPower()
-	if pid, _ := readRuntime(); pid != 0 && supervisorRunning() {
+	pid, mode := readRuntime()
+	if pid != 0 && supervisorRunning() {
 		s.SupervisorPID = pid
+	}
+	// 守护进程说自己在保持，即使租约文件刚被删掉，电源也还没恢复
+	if mode == "keep" {
+		s.Holding = true
 	}
 	for _, l := range leases {
 		if l.Active {
 			s.Holding = true
 			break
 		}
+	}
+	if !cliOK && s.Err == "" {
+		s.Err = "找不到 awake.exe：请把它与 panel.exe 放在同一目录，或加入 PATH"
 	}
 	return s
 }

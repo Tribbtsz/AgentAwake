@@ -4,11 +4,16 @@ package main
 //
 // 界面是 HTML/CSS（web/），通过 window.mygo.call("Api.Xxx") 调用这里。
 // 托盘、任务栏任务胶囊、状态轮询仍然是原生 Go。
+//
+// 线程模型：绑定方法由 mygo 放在各自的 goroutine 上执行，而 app 状态
+// （snap/cfg/page/win/bar）只在主线程读写。所有会碰这些状态的入口都经过
+// onUI 回到主线程，避免数据竞争和偶发的界面错乱。
 
 import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -25,10 +30,22 @@ func initFrontend() {
 	mygo.SetFrontend(sub)
 }
 
+// onUI 在 UI 线程上执行并取回结果。已经在主线程时直接执行。
+// 测试或启动早期还没有 UI 循环，此时直接执行，避免死等。
+func onUI[T any](fn func() T) T {
+	if !mygo.App.IsReady() {
+		return fn()
+	}
+	var v T
+	mygo.RunOnMain(func() { v = fn() })
+	return v
+}
+
 // ---------- 给前端的 DTO ----------
 
 type leaseDTO struct {
 	ID     string `json:"id"`
+	Key    string `json:"key"`
 	Name   string `json:"name"`
 	Mode   string `json:"mode"`
 	Active bool   `json:"active"`
@@ -56,57 +73,71 @@ type stateDTO struct {
 type Api struct{ a *app }
 
 func (api Api) State() stateDTO {
-	a := api.a
-	s := a.snap
-	dto := stateDTO{
-		Holding:      s.Holding,
-		Error:        s.Err,
-		Sleep:        secs(s.Power.SleepAC),
-		Hibernate:    secs(s.Power.HibAC),
-		Display:      secs(s.Power.DisplayAC),
-		OffsetX:      a.cfg.OffsetX,
-		ShowBar:      a.cfg.ShowBar,
-		MaxHours:     a.cfg.MaxHours,
-		Pulse:        a.cfg.Pulse,
-		WantSettings: a.pendingSettings,
-		Build:        buildStamp,
-		Leases:       make([]leaseDTO, 0, len(s.Leases)),
+	if api.a == nil {
+		return stateDTO{Leases: []leaseDTO{}}
 	}
-	a.pendingSettings = false
-	if dto.MaxHours <= 0 {
-		dto.MaxHours = 12
-	}
+	return onUI(func() stateDTO {
+		a := api.a
+		s := a.snap
+		dto := stateDTO{
+			Holding:      s.Holding,
+			Error:        s.Err,
+			Sleep:        secs(s.Power.SleepAC),
+			Hibernate:    secs(s.Power.HibAC),
+			Display:      secs(s.Power.DisplayAC),
+			OffsetX:      a.cfg.OffsetX,
+			ShowBar:      a.cfg.ShowBar,
+			MaxHours:     a.cfg.MaxHours,
+			Pulse:        a.cfg.Pulse,
+			WantSettings: a.pendingSettings,
+			Build:        buildStamp,
+			Leases:       make([]leaseDTO, 0, len(s.Leases)),
+		}
+		a.pendingSettings = false
+		if dto.MaxHours <= 0 {
+			dto.MaxHours = 12
+		}
 
-	switch {
-	case s.Err != "" && !s.Holding:
-		dto.Label = "出错"
-		dto.Sub = s.Err
-	case s.Holding:
-		dto.Label = "保持中"
-		dto.Sub = fmt.Sprintf("%d 个租约生效 · 守护进程 %s", activeCount(s.Leases), pidText(s.SupervisorPID))
-	default:
-		dto.Label = "空闲"
-		dto.Sub = "没有租约，按系统原设置睡眠"
-	}
+		switch {
+		case s.Err != "" && !s.Holding:
+			dto.Label = "出错"
+			dto.Sub = s.Err
+		case s.Holding:
+			dto.Label = "保持中"
+			dto.Sub = fmt.Sprintf("%d 个租约生效 · 守护进程 %s", activeCount(s.Leases), pidText(s.SupervisorPID))
+		default:
+			dto.Label = "空闲"
+			dto.Sub = "没有租约，按系统原设置睡眠"
+		}
 
-	for _, l := range s.Leases {
-		dto.Leases = append(dto.Leases, leaseDTO{
-			ID:     l.ID,
-			Name:   l.Name,
-			Mode:   l.Mode,
-			Active: l.Active,
-			Detail: leaseDetailText(l),
-		})
-	}
-	return dto
+		for _, l := range s.Leases {
+			dto.Leases = append(dto.Leases, leaseDTO{
+				ID:     l.ID,
+				Key:    l.Key,
+				Name:   l.Name,
+				Mode:   l.Mode,
+				Active: l.Active,
+				Detail: leaseDetailText(l),
+			})
+		}
+		return dto
+	})
 }
 
-// InitialPage 启动时显示哪一页（--settings 直接进设置）
+// InitialPage 启动时显示哪一页（--settings 直接进设置）。
+// 只生效一次：之后从托盘打开面板都回到状态页。
 func (api Api) InitialPage() string {
-	if api.a != nil && api.a.startPage != "" {
-		return api.a.startPage
+	if api.a == nil {
+		return "status"
 	}
-	return "status"
+	return onUI(func() string {
+		page := api.a.startPage
+		api.a.startPage = ""
+		if page == "" {
+			return "status"
+		}
+		return page
+	})
 }
 
 // BarState 任务栏小条的状态
@@ -119,26 +150,31 @@ type barStateDTO struct {
 }
 
 func (api Api) BarState() barStateDTO {
-	a := api.a
-	state := "idle"
-	if a.snap.Err != "" && !a.snap.Holding {
-		state = "err"
-	} else if a.snap.Holding {
-		state = "on"
+	if api.a == nil {
+		return barStateDTO{State: "idle", Label: "空闲", Count: "租约 0"}
 	}
-	return barStateDTO{
-		State:   state,
-		Label:   a.statusLabel(),
-		Count:   leaseCountText(activeCount(a.snap.Leases)),
-		Holding: a.snap.Holding,
-		Pulse:   a.cfg.Pulse,
-	}
+	return onUI(func() barStateDTO {
+		a := api.a
+		state := "idle"
+		if a.snap.Err != "" && !a.snap.Holding {
+			state = "err"
+		} else if a.snap.Holding {
+			state = "on"
+		}
+		return barStateDTO{
+			State:   state,
+			Label:   a.statusLabel(),
+			Count:   leaseCountText(activeCount(a.snap.Leases)),
+			Holding: a.snap.Holding,
+			Pulse:   a.cfg.Pulse,
+		}
+	})
 }
 
 // barStateEvent Go 主动把小条状态推给页面（不依赖页面定时器，避免被节流）
 var barStateEvent = mygo.NewEvent[barStateDTO]("bar-state")
 
-// pushBarState 把当前状态推给任务胶囊页面
+// pushBarState 把当前状态推给任务胶囊页面（主线程调用）
 func (a *app) pushBarState() {
 	if a.bar == nil {
 		return
@@ -159,8 +195,13 @@ func (api Api) TaskbarColor() string {
 
 // OpenPanel 小条被点击时打开面板
 func (api Api) OpenPanel() bool {
-	api.a.showPanel()
-	return true
+	if api.a == nil {
+		return false
+	}
+	return onUI(func() bool {
+		api.a.showPanel()
+		return true
+	})
 }
 
 // InitialToast 仅在设置环境变量时返回演示文案，用于视觉验收
@@ -168,13 +209,95 @@ func (api Api) InitialToast() string {
 	if api.a == nil {
 		return ""
 	}
-	return api.a.debugToast
+	return onUI(func() string { return api.a.debugToast })
+}
+
+// defaultAgentPromptTemplate 标题栏「复制提示词」的默认内容（纯英文，给 agent 读）。
+// %d 是 agent 租约的兜底上限（小时）。
+const defaultAgentPromptTemplate = `AgentAwake keeps this Windows PC awake while you work. It only prevents sleep and hibernation; the display still turns off normally.
+
+Declare a lease before long-running work:
+
+    awake acquire -name "<short-task-name>" -followpid <YOUR_PID> -json
+
+The JSON result contains "id" (the full lease id) and "key" (a short key for this lease). Keep the key with your task.
+
+When the work ends, release only your own lease, in both success and failure paths:
+
+    awake release -key <KEY>
+
+You can also release by the full id:
+
+    awake release -id <ID>
+
+Never use "awake release -all" or "awake release -name ...": they can release other agents' leases. Do not edit or delete lease files by hand.
+
+A lease also ends automatically when the bound process exits, or when the maximum lifetime expires (currently %d hours; adjustable in AgentAwake settings). Check state with:
+
+    awake status -json
+
+awake.exe ships next to the AgentAwake panel; add its folder to PATH or call it by its full path.
+`
+
+// defaultAgentPrompt 按当前设置生成默认提示词
+func defaultAgentPrompt(maxHours int) string {
+	if maxHours <= 0 {
+		maxHours = 12
+	}
+	return fmt.Sprintf(defaultAgentPromptTemplate, maxHours)
+}
+
+// Prompt 返回当前提示词：用户改过就用用户的，否则用内置默认
+func (api Api) Prompt() string {
+	if api.a == nil {
+		return defaultAgentPrompt(12)
+	}
+	return onUI(func() string {
+		if p := strings.TrimSpace(api.a.cfg.AgentPrompt); p != "" {
+			return p
+		}
+		return defaultAgentPrompt(api.a.cfg.MaxHours)
+	})
+}
+
+// SetPrompt 保存用户编辑过的提示词（空字符串表示恢复默认）
+func (api Api) SetPrompt(text string) bool {
+	if api.a == nil {
+		return false
+	}
+	text = strings.TrimSpace(text)
+	return onUI(func() bool {
+		api.a.cfg.AgentPrompt = text
+		savePanelConfig(api.a.cfg)
+		return true
+	})
+}
+
+// DefaultPrompt 返回内置默认提示词（只读取，不修改已保存内容）
+func (api Api) DefaultPrompt() string {
+	if api.a == nil {
+		return defaultAgentPrompt(12)
+	}
+	return onUI(func() string { return defaultAgentPrompt(api.a.cfg.MaxHours) })
+}
+
+// CopyText 写入系统剪贴板（WebView 里 navigator.clipboard 不一定可用）
+func (api Api) CopyText(text string) bool {
+	if text == "" {
+		return false
+	}
+	return onUI(func() bool {
+		mygo.Clipboard.WriteText(text)
+		return true
+	})
 }
 
 const (
 	panelWidth     = 420
 	panelMinHeight = 240
-	panelMaxHeight = 900
+	// 面板最大高度（DIP）：设置页内容再长也停在这里，由页面滚动，
+	// 不再让提示词区域自己出滚动条。实际还会被屏幕工作区夹一次。
+	panelMaxHeight = 800
 	// settingsHeight 是设置页的首帧高度；页面量好真实内容高度后会调用
 	// FitHeight 修正，避免窗口打开瞬间底部被裁掉。
 	settingsHeight = 512
@@ -182,33 +305,48 @@ const (
 
 // SetPage 切换页面时同步调整窗口高度（状态页按租约数，设置页按内容）
 func (api Api) SetPage(name string) bool {
-	if api.a == nil || api.a.win == nil {
+	if api.a == nil {
 		return false
 	}
-	if name == "settings" {
-		api.a.page = pageSettings
-		h := api.a.settingsH
-		if h <= 0 {
-			h = settingsHeight
+	return onUI(func() bool {
+		if api.a.win == nil {
+			return false
 		}
-		api.a.win.SetSize(panelWidth, h)
-	} else {
-		api.a.page = pageStatus
-		api.a.win.SetSize(panelWidth, api.a.statusHeight())
-	}
-	return true
+		if name == "settings" {
+			api.a.page = pageSettings
+			h := api.a.settingsH
+			if h <= 0 {
+				h = settingsHeight
+			}
+			api.a.win.SetSize(panelWidth, h)
+		} else {
+			api.a.page = pageStatus
+			api.a.win.SetSize(panelWidth, api.a.statusHeight())
+		}
+		return true
+	})
 }
 
 // FitHeight 由设置页测量内容高度后调用：窗口贴合内容，底部不再被裁掉。
-// 只在设置页生效，并限制在合理区间内，避免页面量出异常值时窗口失控。
+// 只在设置页生效，并限制在屏幕工作区内，避免页面量出异常值时窗口失控。
 func (api Api) FitHeight(h int) bool {
-	if api.a == nil || api.a.win == nil || api.a.page != pageSettings {
+	if api.a == nil {
 		return false
 	}
-	h = clampInt(h, panelMinHeight, panelMaxHeight)
-	api.a.settingsH = h
-	api.a.win.SetSize(panelWidth, h)
-	return true
+	return onUI(func() bool {
+		if api.a.win == nil || api.a.page != pageSettings {
+			return false
+		}
+		h = clampInt(h, panelMinHeight, panelMaxHeight)
+		if d := mygo.Screen.PrimaryDisplay(); d.WorkArea.Height > 0 {
+			if maxH := d.WorkArea.Height - 8; h > maxH {
+				h = maxH
+			}
+		}
+		api.a.settingsH = h
+		api.a.win.SetSize(panelWidth, h)
+		return true
+	})
 }
 
 // statusHeight 状态页高度 = 固定区 + 租约行数（最多算 3 行）
@@ -228,58 +366,77 @@ func (a *app) fitPanel() {
 	a.win.SetSize(panelWidth, a.statusHeight())
 }
 
-// ---------- 动作（异步执行，避免阻塞界面） ----------
+// ---------- 动作（同步执行，错误回传给页面） ----------
 
-func (api Api) HoldMinutes(m int) string {
+func (api Api) HoldMinutes(m int) error {
 	if m <= 0 {
 		m = 30
 	}
-	api.a.runAction(fmt.Sprintf("%dm", m))
-	return "ok"
+	return api.run("hold", "-For", fmt.Sprintf("%dm", m), "-Name", "manual")
 }
 
-func (api Api) HoldUntil(hhmm string) string {
+func (api Api) HoldUntil(hhmm string) error {
 	if hhmm == "" {
 		hhmm = "06:00"
 	}
-	api.a.runActionUntil(hhmm)
-	return "ok"
+	return api.run("hold", "-Until", hhmm, "-Name", "manual")
 }
 
-func (api Api) Release(id string) string {
-	api.a.runRelease(id)
-	return "ok"
+func (api Api) Release(id string) error {
+	return api.run("release", "-Id", id)
 }
 
-func (api Api) Stop() string {
-	api.a.runStop()
-	return "ok"
+func (api Api) Stop() error {
+	return api.run("stop")
+}
+
+// run 执行一次 CLI 动作并刷新状态。失败时把 CLI 的输出交给页面显示，
+// 而不是只写进一个没人看的字段。
+func (api Api) run(args ...string) error {
+	out, err := runCLI(args...)
+	snap := readSnapshot()
+	api.a.update(func() { api.a.snap = snap })
+	if err == nil {
+		return nil
+	}
+	if msg := strings.TrimSpace(out); msg != "" {
+		return fmt.Errorf("%s", msg)
+	}
+	return err
 }
 
 func (api Api) SetOffset(px int) bool {
-	api.a.cfg.OffsetX = clampInt(px, -1400, 1400)
-	savePanelConfig(api.a.cfg)
-	api.a.applyPosition()
-	return true
+	return onUI(func() bool {
+		api.a.cfg.OffsetX = clampInt(px, -1400, 1400)
+		savePanelConfig(api.a.cfg)
+		api.a.applyPosition()
+		return true
+	})
 }
 
 func (api Api) SetShowBar(v bool) bool {
-	api.a.cfg.ShowBar = v
-	savePanelConfig(api.a.cfg)
-	api.a.applyBarVisibility()
-	return true
+	return onUI(func() bool {
+		api.a.cfg.ShowBar = v
+		savePanelConfig(api.a.cfg)
+		api.a.applyBarVisibility()
+		return true
+	})
 }
 
 func (api Api) SetPulse(v bool) bool {
-	api.a.cfg.Pulse = v
-	savePanelConfig(api.a.cfg)
-	return true
+	return onUI(func() bool {
+		api.a.cfg.Pulse = v
+		savePanelConfig(api.a.cfg)
+		return true
+	})
 }
 
 func (api Api) SetMaxHours(h int) bool {
-	api.a.cfg.MaxHours = clampInt(h, 1, 24)
-	savePanelConfig(api.a.cfg)
-	return true
+	return onUI(func() bool {
+		api.a.cfg.MaxHours = clampInt(h, 1, 24)
+		savePanelConfig(api.a.cfg)
+		return true
+	})
 }
 
 func clampInt(v, lo, hi int) int {
@@ -292,49 +449,6 @@ func clampInt(v, lo, hi int) int {
 	return v
 }
 
-// runAction 执行 CLI 动作并刷新状态（后台线程）
-func (a *app) runAction(forSpec string) {
-	go func() {
-		out, err := runCLI("hold", "-For", forSpec, "-Name", "manual")
-		a.reportResult(out, err)
-		a.update(func() { a.snap = readSnapshot() })
-	}()
-}
-
-func (a *app) runActionUntil(hhmm string) {
-	go func() {
-		out, err := runCLI("hold", "-Until", hhmm, "-Name", "manual")
-		a.reportResult(out, err)
-		a.update(func() { a.snap = readSnapshot() })
-	}()
-}
-
-func (a *app) runRelease(id string) {
-	go func() {
-		out, err := runCLI("release", "-Id", id)
-		a.reportResult(out, err)
-		a.update(func() { a.snap = readSnapshot() })
-	}()
-}
-
-func (a *app) runStop() {
-	go func() {
-		out, err := runCLI("stop")
-		a.reportResult(out, err)
-		a.update(func() { a.snap = readSnapshot() })
-	}()
-}
-
-func (a *app) reportResult(out string, err error) {
-	a.update(func() {
-		if err != nil {
-			a.err = fmt.Sprintf("%v\n%s", err, out)
-		} else {
-			a.err = ""
-		}
-	})
-}
-
 // ---------- 供界面/原生共用的辅助 ----------
 
 func pidText(pid int) string {
@@ -345,13 +459,22 @@ func pidText(pid int) string {
 }
 
 func leaseDetailText(l leaseView) string {
+	parts := ""
+	if l.Key != "" {
+		parts = "密钥 " + l.Key
+	}
 	if l.Mode == "deadline" && l.Active {
-		return "剩 " + spanText(l.Remaining)
+		if parts != "" {
+			parts += " · "
+		}
+		return parts + "剩 " + spanText(l.Remaining)
 	}
 	if l.Mode == "release" {
-		parts := ""
 		if l.PID != 0 {
-			parts = fmt.Sprintf("进程 %d（%s）", l.PID, l.ProcessName)
+			if parts != "" {
+				parts += " · "
+			}
+			parts += fmt.Sprintf("进程 %d（%s）", l.PID, l.ProcessName)
 		}
 		if l.MaxUntil != "" {
 			if tm, err := time.Parse(time.RFC3339Nano, l.MaxUntil); err == nil {
@@ -361,12 +484,11 @@ func leaseDetailText(l leaseView) string {
 				parts += "最长到 " + tm.Format("01-02 15:04")
 			}
 		}
-		return parts
 	}
-	return ""
+	return parts
 }
 
-// applyPosition 把位置改动立刻反映到任务胶囊
+// applyPosition 把位置改动立刻反映到任务胶囊（主线程调用）
 func (a *app) applyPosition() {
 	if a.bar == nil {
 		return
@@ -381,11 +503,13 @@ func (a *app) applyPosition() {
 	}
 }
 
+// applyBarVisibility 显示/隐藏任务胶囊（主线程调用）
 func (a *app) applyBarVisibility() {
 	if a.bar == nil {
 		return
 	}
 	if a.cfg.ShowBar {
+		a.barSuppressed = false
 		a.applyPosition()
 		a.bar.ShowInactive()
 	} else {

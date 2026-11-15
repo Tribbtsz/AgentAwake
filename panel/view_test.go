@@ -3,6 +3,7 @@ package main
 // view_test.go — 状态与视图契约测试（界面现在由 HTML 渲染，这里守住数据契约）
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -132,5 +133,42 @@ func TestEvaluateLeaseRules(t *testing.T) {
 	l2 := lease{Mode: "release", Released: true}
 	if state, active, _ := evaluateLease(l2, time.Now()); active || state != "released" {
 		t.Errorf("已释放的租约应失效，得到 %s", state)
+	}
+}
+
+func TestPromptDefaultAndCustom(t *testing.T) {
+	a := newTestApp()
+	api := Api{a: a}
+
+	p := api.Prompt()
+	if !strings.Contains(p, "awake release -key") {
+		t.Errorf("默认提示词应包含按密钥释放的说明，得到：\n%s", p)
+	}
+	if !strings.Contains(p, "awake acquire") {
+		t.Errorf("默认提示词应包含申请租约的说明")
+	}
+	if !strings.Contains(p, "12 hours") {
+		t.Errorf("默认提示词应写入当前兜底上限，得到：\n%s", p)
+	}
+
+	a.cfg.MaxHours = 7
+	if p := api.Prompt(); !strings.Contains(p, "7 hours") {
+		t.Errorf("修改上限后提示词应更新，得到：\n%s", p)
+	}
+
+	a.cfg.AgentPrompt = "  custom prompt  "
+	if got := api.Prompt(); got != "custom prompt" {
+		t.Errorf("应使用自定义提示词，得到 %q", got)
+	}
+}
+
+func TestLeaseDetailShowsKey(t *testing.T) {
+	l := leaseView{lease: lease{ID: "a1", Key: "ABC234", Mode: "release"}, Active: true}
+	if got := leaseDetailText(l); !strings.Contains(got, "ABC234") {
+		t.Errorf("租约详情应显示密钥，得到 %q", got)
+	}
+	d := leaseView{lease: lease{Key: "XYZ789", Mode: "deadline"}, Active: true, Remaining: 90 * time.Second}
+	if got := leaseDetailText(d); !strings.Contains(got, "XYZ789") || !strings.Contains(got, "剩") {
+		t.Errorf("定时租约详情应包含密钥与剩余时间，得到 %q", got)
 	}
 }

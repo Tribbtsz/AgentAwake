@@ -21,32 +21,34 @@ import (
 )
 
 var (
-	user32                       = windows.NewLazySystemDLL("user32.dll")
-	kernel32                     = windows.NewLazySystemDLL("kernel32.dll")
-	gdi32                        = windows.NewLazySystemDLL("gdi32.dll")
-	procFindWindow               = user32.NewProc("FindWindowW")
-	procFindWindowEx             = user32.NewProc("FindWindowExW")
-	procSetParent                = user32.NewProc("SetParent")
-	procSetWindowPos             = user32.NewProc("SetWindowPos")
-	procGetWindowLongPtr         = user32.NewProc("GetWindowLongPtrW")
-	procSetWindowLongPtr         = user32.NewProc("SetWindowLongPtrW")
-	procGetClassName             = user32.NewProc("GetClassNameW")
-	procGetWindowText            = user32.NewProc("GetWindowTextW")
-	procGetWindowRect            = user32.NewProc("GetWindowRect")
-	procGetClientRect            = user32.NewProc("GetClientRect")
-	procIsWindowVisible          = user32.NewProc("IsWindowVisible")
-	procWindowFromPoint          = user32.NewProc("WindowFromPoint")
-	procSetForegroundWindow      = user32.NewProc("SetForegroundWindow")
-	procBringWindowToTop         = user32.NewProc("BringWindowToTop")
-	procGetSystemMetrics         = user32.NewProc("GetSystemMetrics")
-	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
-	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
-	procAttachThreadInput        = user32.NewProc("AttachThreadInput")
-	procGetCurrentThreadId       = kernel32.NewProc("GetCurrentThreadId")
-	procGetAncestor              = user32.NewProc("GetAncestor")
-	procGetDC                    = user32.NewProc("GetDC")
-	procReleaseDC                = user32.NewProc("ReleaseDC")
-	procGetPixel                 = gdi32.NewProc("GetPixel")
+	user32                           = windows.NewLazySystemDLL("user32.dll")
+	kernel32                         = windows.NewLazySystemDLL("kernel32.dll")
+	gdi32                            = windows.NewLazySystemDLL("gdi32.dll")
+	shell32                          = windows.NewLazySystemDLL("shell32.dll")
+	procSHQueryUserNotificationState = shell32.NewProc("SHQueryUserNotificationState")
+	procFindWindow                   = user32.NewProc("FindWindowW")
+	procFindWindowEx                 = user32.NewProc("FindWindowExW")
+	procSetParent                    = user32.NewProc("SetParent")
+	procSetWindowPos                 = user32.NewProc("SetWindowPos")
+	procGetWindowLongPtr             = user32.NewProc("GetWindowLongPtrW")
+	procSetWindowLongPtr             = user32.NewProc("SetWindowLongPtrW")
+	procGetClassName                 = user32.NewProc("GetClassNameW")
+	procGetWindowText                = user32.NewProc("GetWindowTextW")
+	procGetWindowRect                = user32.NewProc("GetWindowRect")
+	procGetClientRect                = user32.NewProc("GetClientRect")
+	procIsWindowVisible              = user32.NewProc("IsWindowVisible")
+	procWindowFromPoint              = user32.NewProc("WindowFromPoint")
+	procSetForegroundWindow          = user32.NewProc("SetForegroundWindow")
+	procBringWindowToTop             = user32.NewProc("BringWindowToTop")
+	procGetSystemMetrics             = user32.NewProc("GetSystemMetrics")
+	procGetForegroundWindow          = user32.NewProc("GetForegroundWindow")
+	procGetWindowThreadProcessId     = user32.NewProc("GetWindowThreadProcessId")
+	procAttachThreadInput            = user32.NewProc("AttachThreadInput")
+	procGetCurrentThreadId           = kernel32.NewProc("GetCurrentThreadId")
+	procGetAncestor                  = user32.NewProc("GetAncestor")
+	procGetDC                        = user32.NewProc("GetDC")
+	procReleaseDC                    = user32.NewProc("ReleaseDC")
+	procGetPixel                     = gdi32.NewProc("GetPixel")
 )
 
 const gaRoot = 2 // GA_ROOT
@@ -198,24 +200,68 @@ func (a *app) positionInTaskbar() bool {
 	return r1 != 0
 }
 
-// keepOnTop 确保任务栏胶囊保持在任务栏上方。
-// 仅在检测到被任务栏遮挡时，轻量调用一次 SetWindowPos(HWND_TOPMOST) 提升。
-// 不主动降级，不调用 RedrawWindow，不抢焦点，开销极低且绝不卡顿。
+// keepOnTop 保持任务栏胶囊可见，但任务栏被自动隐藏或前台全屏时收起。
+// 每 300ms 回到主线程检查一次（开销只有几个 Win32 调用）。
 func (a *app) keepOnTop() {
 	for {
 		time.Sleep(300 * time.Millisecond)
-		if a.bar == nil || !a.cfg.ShowBar || !a.overTaskbar {
-			continue
-		}
-		h := a.bar.NativeHandle()
-		if h == 0 || !isWindowVisible(h) {
-			continue
-		}
-		if isOccluded(h) {
-			procSetWindowPos.Call(h, hwndTopmost, 0, 0, 0, 0,
-				uintptr(swPNoMove|swPNoSize|swPNoActivate))
-		}
+		mygo.RunOnMain(a.syncBarPresence)
 	}
+}
+
+// syncBarPresence 根据任务栏/前台状态显示或收起胶囊
+func (a *app) syncBarPresence() {
+	if a.bar == nil || !a.cfg.ShowBar || !a.overTaskbar {
+		return
+	}
+	if a.barSuppressed {
+		if barShouldShow() {
+			a.barSuppressed = false
+			a.applyPosition()
+			a.bar.ShowInactive()
+		}
+		return
+	}
+	if !barShouldShow() {
+		a.barSuppressed = true
+		a.bar.Hide()
+		return
+	}
+	h := a.bar.NativeHandle()
+	if h == 0 || !isWindowVisible(h) {
+		return
+	}
+	if isOccluded(h) {
+		procSetWindowPos.Call(h, hwndTopmost, 0, 0, 0, 0,
+			uintptr(swPNoMove|swPNoSize|swPNoActivate))
+	}
+}
+
+// barShouldShow 任务栏被自动隐藏（只剩几像素）、或前台是全屏应用/演示模式时，
+// 胶囊不应该浮在上面。
+func barShouldShow() bool {
+	l, t, r, b, ok := taskbarRect()
+	if !ok {
+		return false
+	}
+	if r-l < 8 || b-t < 8 {
+		return false
+	}
+	return !shellBusy()
+}
+
+// shellBusy 前台全屏 / 演示模式：Windows 自己的通知状态查询
+func shellBusy() bool {
+	var state int32
+	r, _, _ := procSHQueryUserNotificationState.Call(uintptr(unsafe.Pointer(&state)))
+	if r != 0 {
+		return false // 查询失败时按正常处理，不隐藏
+	}
+	switch state {
+	case 2, 3, 4: // QUNS_BUSY / QUNS_RUNNING_D3D_FULL_SCREEN / QUNS_PRESENTATION_MODE
+		return true
+	}
+	return false
 }
 
 // isOccluded 判断窗口中心点是否被别的窗口盖住
@@ -331,35 +377,45 @@ func setWindowLong(hwnd uintptr, index int, value uintptr) uintptr {
 	return r
 }
 
-// watchTaskbar 后台守护：explorer 重启后重新嵌入；彻底失败则退回上方模式
+// watchTaskbar 后台守护：explorer 重启后重新嵌入；彻底失败则退回覆盖模式
 func (a *app) watchTaskbar() {
 	for {
 		time.Sleep(3 * time.Second)
-		if a.bar == nil || !a.embedded {
-			continue
-		}
-		hwnd := a.bar.NativeHandle()
-		if hwnd == 0 {
-			continue
-		}
-		tray := findTrayHost()
-		if tray == 0 {
-			continue // explorer 还没起来，继续等
-		}
-		if getParent(hwnd) != tray {
-			// 任务栏被重建：重新嵌入
-			style := getWindowLong(hwnd, gwlStyle)
-			setWindowLong(hwnd, gwlStyle, (style&^wsPopUp)|wsChild)
-			if !setParent(hwnd, tray) || !a.positionInTaskbar() {
-				// 重挂失败 → 退回上方模式
-				a.embedded = false
-				setWindowLong(hwnd, gwlStyle, (style&^wsChild)|wsPopUp)
-				a.placeTrafficBar()
-				if a.cfg.ShowBar {
-					a.bar.ShowInactive()
-				}
-				fmt.Println("[AgentAwake] 任务栏嵌入失效，已退回上方模式")
-			}
-		}
+		mygo.RunOnMain(a.checkTaskbar)
 	}
+}
+
+// checkTaskbar 检查嵌入关系是否还在（主线程）
+func (a *app) checkTaskbar() {
+	if a.bar == nil || !a.embedded {
+		return
+	}
+	hwnd := a.bar.NativeHandle()
+	if hwnd == 0 {
+		return
+	}
+	tray := findTrayHost()
+	if tray == 0 {
+		return // explorer 还没起来，继续等
+	}
+	if getParent(hwnd) == tray {
+		return
+	}
+	// 任务栏被重建：重新嵌入
+	style := getWindowLong(hwnd, gwlStyle)
+	setWindowLong(hwnd, gwlStyle, (style&^wsPopUp)|wsChild)
+	if setParent(hwnd, tray) && a.positionInTaskbar() {
+		return
+	}
+	// 重挂失败 → 退回覆盖模式（与默认模式一致）
+	a.embedded = false
+	a.overTaskbar = true
+	setWindowLong(hwnd, gwlStyle, (style&^wsChild)|wsPopUp)
+	a.positionOverTaskbar()
+	if a.cfg.ShowBar && barShouldShow() {
+		a.barSuppressed = false
+		a.bar.ShowInactive()
+	}
+	fmt.Println("[AgentAwake] 任务栏嵌入失效，已退回覆盖模式")
+	dbg("任务栏嵌入失效，已退回覆盖模式")
 }

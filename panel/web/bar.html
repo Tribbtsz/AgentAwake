@@ -19,6 +19,7 @@
   body { display: flex; align-items: center; justify-content: center; }
   /* 深色胶囊：比任务栏略亮；无任何阴影（只有背景渐变） */
   .pill {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -34,22 +35,30 @@
         rgba(255, 255, 255, 0.065) 46%,
         rgba(255, 255, 255, 0.04) 100%),
       #2b2f37;
-    transition: opacity 160ms ease;
   }
-  /* 保持中：整块胶囊泛绿并快速呼吸（绿色=运行中） */
+  .pill > * { position: relative; z-index: 1; }
+  /* 保持中：绿色叠层用 opacity 呼吸。动画由 JS 每 900ms 切一次类，
+     避免 CSS 逐帧动画在透明窗口里持续重绘（常驻时 CPU 明显）。 */
+  .pill::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    background: rgba(127, 201, 155, 0.55);
+    opacity: 0;
+    pointer-events: none;
+  }
   .pill.on {
     background:
       linear-gradient(180deg,
-        rgba(127, 201, 155, 0.55) 0%,
-        rgba(127, 201, 155, 0.40) 52%,
-        rgba(127, 201, 155, 0.30) 100%),
+        rgba(127, 201, 155, 0.35) 0%,
+        rgba(127, 201, 155, 0.22) 52%,
+        rgba(127, 201, 155, 0.16) 100%),
       #24382b;
-    animation: capsule-breathe 1.5s ease-in-out infinite;
   }
-  @keyframes capsule-breathe {
-    0%, 100% { filter: brightness(1); }
-    50%      { filter: brightness(1.45); }
-  }
+  .pill.on::after { opacity: 0.16; }
+  .pill.on.breathe::after { opacity: 0.45; }
   .dot { font-size: 8px; line-height: 1; }
   .dot.idle { color: #9AA0A6; }
   .dot.on { color: #7FC99B; }

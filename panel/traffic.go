@@ -1,8 +1,9 @@
 package main
 
-// traffic.go — 任务栏胶囊（原生绘制，覆盖在任务栏空白区上）
+// traffic.go — 任务栏胶囊（网页渲染，覆盖在任务栏空白区上）
 //
-// 深色胶囊 + 顶部 1px 高光，垂直居中；点击打开面板。
+// 页面见 web/bar.html + web/bar.js：深色胶囊 + 顶部 1px 高光，
+// 点击打开面板。Go 只负责窗口尺寸、位置与状态推送。
 
 import (
 	"fmt"
@@ -10,33 +11,16 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/ui"
 )
 
-// barView 胶囊内容：原生绘制（透明窗口上画圆角矩形）
-func (a *app) barView(c *ui.Context) {
-	dotColor := ui.Hex("#9AA0A6")
-	switch {
-	case a.snap.Err != "" && !a.snap.Holding:
-		dotColor = ui.Hex("#D4796F")
-	case a.snap.Holding:
-		dotColor = ui.Hex("#7FC99B")
-	}
-	n := activeCount(a.snap.Leases)
-
-	ui.Box(c).Fill().Children(func() {
-		if ui.ButtonBase(c).Clicked() {
-			a.showPanel()
-		}
-		ui.Box(c).Fill().PaddingY(3).Radius(15).
-			Background(ui.RGBA(48, 52, 60, 255)).Children(func() {
-			ui.Row(c).Fill().Center().Gap(4).PaddingX(8).Children(func() {
-				ui.Text(c, "●").FontSize(9).TextColor(dotColor).NoWrap()
-				ui.Text(c, a.statusLabel()).FontSize(11).TextColor(ui.Hex("#E8EAED")).NoWrap()
-				ui.Text(c, leaseCountText(n)).FontSize(11).TextColor(ui.Hex("#A9AFB7")).NoWrap()
-			})
-		})
-	})
+// placeTrafficBar 上方模式：主屏右下角、任务栏上方。
+// mygo 的 WorkArea / SetSize / SetPosition 都是 DIP，全程不要混入物理像素。
+func (a *app) placeTrafficBar() {
+	d := mygo.Screen.PrimaryDisplay()
+	w, h := a.currentBarSize()
+	x := d.WorkArea.X + d.WorkArea.Width - w - 12 + a.cfg.OffsetX
+	y := d.WorkArea.Y + d.WorkArea.Height - h - 4
+	a.bar.SetPosition(x, y)
 }
 
 // barWidthFor 计算当前状态需要的胶囊宽度（中文约 12px/字，西文 7px）
@@ -61,21 +45,6 @@ func (a *app) barWidthFor() int {
 		w = 280
 	}
 	return w
-}
-
-// placeTrafficBar 上方模式：主屏右下角、任务栏上方
-func (a *app) placeTrafficBar() {
-	d := mygo.Screen.PrimaryDisplay()
-	w, h := a.currentBarSize()
-	scale := d.ScaleFactor
-	if scale <= 0 {
-		scale = 1
-	}
-	pw, ph := int(float64(w)*scale), int(float64(h)*scale)
-	x := d.WorkArea.X + d.WorkArea.Width - pw - 12
-	y := d.WorkArea.Y + d.WorkArea.Height - ph - 4
-	x += int(float64(a.cfg.OffsetX) * scale)
-	a.bar.SetPosition(x, y)
 }
 
 // sampleTaskbarColor 取任务栏底色（多点取样取最暗，避免采到图标的浅色）
