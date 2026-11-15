@@ -6,8 +6,8 @@ const call = (m, ...a) => window.mygo.call(`Api.${m}`, ...a);
 
 let page = 'status';
 let lastLeaseSig = '';
-let offsetTouched = false;
-let maxHoursTouched = false;
+let offsetHeld = false;      // 手指/鼠标在滑条上，轮询不要覆盖显示值
+let maxHoursHeld = false;
 let firstPage = true;
 
 // 线性图标（hugeicons 风格，1.6 描边）
@@ -191,6 +191,8 @@ function setText(el, value) {
   if (el && el.textContent !== value) el.textContent = value;
 }
 
+const offsetText = (v) => (v > 0 ? '+' : '') + v + ' px';
+
 function render(s) {
   const dot = $('dot');
   const dotClass = 'dot' + (s.holding ? ' on' : (s.error ? ' err' : ''));
@@ -217,10 +219,18 @@ function render(s) {
   renderChips(s);
   renderLeases(s);
 
-  if (document.activeElement !== $('offsetRange')) $('offsetRange').value = s.offsetX;
-  setText($('offsetVal'), (s.offsetX > 0 ? '+' : '') + s.offsetX + ' px');
-  if (document.activeElement !== $('maxHoursRange')) $('maxHoursRange').value = s.maxHours;
-  setText($('maxHoursVal'), s.maxHours + ' 小时');
+  // 滑条还在焦点里（拖动/键盘调整）时不要用轮询来的旧值覆盖，
+  // 否则数字和滑块会一秒跳回旧值一次。
+  const offsetRange = $('offsetRange');
+  if (!offsetHeld && document.activeElement !== offsetRange) {
+    offsetRange.value = s.offsetX;
+    setText($('offsetVal'), offsetText(s.offsetX));
+  }
+  const maxHoursRange = $('maxHoursRange');
+  if (!maxHoursHeld && document.activeElement !== maxHoursRange) {
+    maxHoursRange.value = s.maxHours;
+    setText($('maxHoursVal'), s.maxHours + ' 小时');
+  }
   $('showBarSwitch').checked = s.showBar;
   $('pulseSwitch').checked = s.pulse;
 }
@@ -329,18 +339,26 @@ $('holdBtns').addEventListener('click', (e) => {
   }
 });
 
-$('offsetRange').addEventListener('pointerdown', () => { offsetTouched = true; });
-$('offsetRange').addEventListener('input', (e) => {
-  const v = Number(e.target.value);
-  $('offsetVal').textContent = (v > 0 ? '+' : '') + v + ' px';
+const offsetRange = $('offsetRange');
+const maxHoursRange = $('maxHoursRange');
+
+// 拖动期间锁住显示值，哪怕焦点意外丢失也不让 1 秒轮询把数字改回旧值
+function holdSlider(el, setHeld) {
+  el.addEventListener('pointerdown', () => setHeld(true));
+  el.addEventListener('pointerup', () => setTimeout(() => setHeld(false), 200));
+  el.addEventListener('pointercancel', () => setHeld(false));
+}
+holdSlider(offsetRange, (v) => { offsetHeld = v; });
+holdSlider(maxHoursRange, (v) => { maxHoursHeld = v; });
+
+offsetRange.addEventListener('input', (e) => {
+  setText($('offsetVal'), offsetText(Number(e.target.value)));
 });
-$('offsetRange').addEventListener('change', async (e) => {
-  if (!offsetTouched) return;   // 只接受用户真实拖动
-  offsetTouched = false;
+offsetRange.addEventListener('change', async (e) => {
   await call('SetOffset', Number(e.target.value));
+  refresh();
 });
 $('resetOffset').onclick = async () => {
-  offsetTouched = false;
   await call('SetOffset', 0);
   toast('位置已重置');
   refresh();
@@ -352,14 +370,12 @@ $('pulseSwitch').addEventListener('change', async (e) => {
   await call('SetPulse', e.target.checked);
   refresh();
 });
-$('maxHoursRange').addEventListener('pointerdown', () => { maxHoursTouched = true; });
-$('maxHoursRange').addEventListener('input', (e) => {
-  $('maxHoursVal').textContent = e.target.value + ' 小时';
+maxHoursRange.addEventListener('input', (e) => {
+  setText($('maxHoursVal'), e.target.value + ' 小时');
 });
-$('maxHoursRange').addEventListener('change', async (e) => {
-  if (!maxHoursTouched) return;
-  maxHoursTouched = false;
+maxHoursRange.addEventListener('change', async (e) => {
   await call('SetMaxHours', Number(e.target.value));
+  refresh();
 });
 
 // ---------- 轮询 ----------
