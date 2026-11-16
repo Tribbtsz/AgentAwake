@@ -386,19 +386,6 @@ $('holdBtns').addEventListener('click', (e) => {
   }
 });
 
-// 手动息屏：点完立刻关屏，动一下鼠标就亮。系统自己的熄屏计时被别的进程压住时用。
-$('sleepBtn').addEventListener('click', async () => {
-  const btn = $('sleepBtn');
-  btn.disabled = true;
-  try {
-    await call('Api.SleepDisplay');
-  } catch (e) {
-    showError('息屏失败：' + (e && e.message ? e.message : e));
-  } finally {
-    setTimeout(() => { btn.disabled = false; }, 800);
-  }
-});
-
 const offsetRange = $('offsetRange');
 const maxHoursRange = $('maxHoursRange');
 
