@@ -70,18 +70,18 @@ body::-webkit-scrollbar { width: 0; height: 0; }
   padding: 12px 0 10px;
 }
 .titlebar-icon {
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
   object-fit: contain;
   pointer-events: none;
   flex-shrink: 0;
 }
 .titlebar-name {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: .3px;
-  color: var(--faint);
+  color: var(--muted);
 }
 .titlebar-build {
   font-size: 10px;

@@ -272,7 +272,10 @@ func sameSnapshot(a, b snapshot) bool {
 	}
 	for i := range a.Leases {
 		x, y := a.Leases[i], b.Leases[i]
-		if x.ID != y.ID || x.Active != y.Active || x.Name != y.Name || x.StateText != y.StateText {
+		// 比 leaseDetailText 用到的字段：详情文本变了必须让界面跟着刷新
+		if x.ID != y.ID || x.Active != y.Active || x.Name != y.Name || x.Mode != y.Mode ||
+			x.Key != y.Key || x.Remaining != y.Remaining ||
+			x.PID != y.PID || x.ProcessName != y.ProcessName || x.MaxUntil != y.MaxUntil {
 			return false
 		}
 		// 定时租约的剩余时间：平时按分钟比较，最后一分钟按秒，倒计时才动

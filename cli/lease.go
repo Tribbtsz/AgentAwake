@@ -305,7 +305,7 @@ func findLeases(o *options, requireSelector bool) ([]Lease, error) {
 		return hits, nil
 	}
 	if requireSelector {
-		return nil, fmt.Errorf("需要指定 -Id、-Name 或 -All")
+		return nil, fmt.Errorf("需要指定 -Key、-Id 或 -Name 之一（或 -All）")
 	}
 	return nil, nil
 }
