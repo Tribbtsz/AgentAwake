@@ -32,4 +32,30 @@ cd panel; go test ./...; go build ./...
 - 后台 goroutine 不直接操作 UI，回到主线程用 `RunOnMain` / `Update`；
   `onUI` 依赖 mygo `RunOnMain` 主线程重入直接执行的语义（见 `docs/design.md`）。
 - 提交使用约定式提交消息（`feat:` / `fix:` / `docs:` / `chore:` …）。
-- 发版：更新版本号 → tag `vX.Y.Z` → GitHub Actions 自动构建发布（见 `.github/workflows/release.yml`）。
+
+## 发版规范
+
+**版本号**（SemVer；1.0 之前接口不承诺稳定）：
+
+| 改动 | 版本 | 例 |
+|---|---|---|
+| 新增用户可感知的功能 | `0.x.0` | v0.1.0 → v0.2.0 |
+| 只有修复 | `0.x.y` | v0.2.0 → v0.2.1 |
+| 破坏性变更 / 行为契约冻结 | `1.0.0` 起 | — |
+
+**节奏**：按「一个用户可感知的变更批次」发布，不逐 commit 发，也不积压：
+
+- 新功能单独发；2–3 个修复攒一批；typo/纯文档跟随下一批
+- 严重问题（崩溃、数据丢失、安全）立即发，不攒
+- 判断标准：这次改动值不值得用户重新下载一次
+
+**流程**：
+
+1. main 分支测试全绿（CI 在 push/PR 时自动验证）
+2. `git tag -a vX.Y.Z -m "AgentAwake vX.Y.Z"`
+3. `git push origin vX.Y.Z` — `.github/workflows/release.yml` 自动构建
+   zip（含两个 exe + README/LICENSE/DESIGN）、生成 SHA256 并发布 Release
+
+**产物**：`AgentAwake-vX.Y.Z-windows-x64.zip` + `checksums-sha256.txt`；
+目前只发 windows-x64，未做代码签名（SmartScreen 提示在 Release 说明里告知）。
+
