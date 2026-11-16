@@ -90,7 +90,7 @@ func (api Api) State() stateDTO {
 			MaxHours:     a.cfg.MaxHours,
 			Pulse:        a.cfg.Pulse,
 			WantSettings: a.pendingSettings,
-			Build:        buildStamp,
+			Build:        buildStamp(),
 			Leases:       make([]leaseDTO, 0, len(s.Leases)),
 		}
 		a.pendingSettings = false

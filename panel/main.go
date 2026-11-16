@@ -184,7 +184,7 @@ func main() {
 		// 系统「减少动画」：首帧也按它来，别先淡入一次再停
 		a.barUI.still = mygo.Theme.Preferences().ReduceMotion
 		a.ensureBar()
-		logf("panel", "面板启动 %s：胶囊=%s", buildStamp, a.barModeText())
+		logf("panel", "面板启动 %s：胶囊=%s", buildStamp(), a.barModeText())
 
 		if openOnStart {
 			a.showPanel()
@@ -225,8 +225,18 @@ func cliFound() bool {
 }
 
 // pollLoop 只读本地文件与注册表，开销是微秒级；2 秒一次足够
-// buildStamp 构建标记：直接用可执行文件的写入时间，不需要任何 -ldflags 注入
-var buildStamp = stampFromExe()
+// version 版本号：发布构建用 -ldflags "-X main.version=v0.1.0" 注入；
+// 本地 go build 不注入时就是 dev，面板右上角与托盘提示都显示它。
+var version = "dev"
+
+// buildStamp 返回展示用的版本标记：发布版是 v0.1.0，开发版退化成
+// 可执行文件的写入时间（如 1116-1530），一样能对上「你看到的是哪一版」。
+func buildStamp() string {
+	if version != "dev" {
+		return version
+	}
+	return stampFromExe()
+}
 
 func stampFromExe() string {
 	p, err := os.Executable()
@@ -303,9 +313,9 @@ func trayIcon(s snapshot) []byte {
 
 func trayTip(s snapshot) string {
 	if s.Holding {
-		return fmt.Sprintf("AgentAwake %s：保持中（%d 个租约）", buildStamp, activeCount(s.Leases))
+		return fmt.Sprintf("AgentAwake %s：保持中（%d 个租约）", buildStamp(), activeCount(s.Leases))
 	}
-	return "AgentAwake " + buildStamp + "：空闲"
+	return "AgentAwake " + buildStamp() + "：空闲"
 }
 
 // ---------- 面板窗口 ----------

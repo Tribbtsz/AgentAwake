@@ -26,6 +26,10 @@ import (
 	"time"
 )
 
+// version 版本号：发布构建用 -ldflags "-X main.version=v0.1.0" 注入；
+// 本地 go build 不注入时就是 dev。
+var version = "dev"
+
 type options struct {
 	name         string
 	id           string
@@ -82,6 +86,9 @@ func main() {
 		os.Exit(cmdStop())
 	case "status", "list":
 		os.Exit(cmdStatus(o))
+	case "version", "-v", "--version":
+		fmt.Println("awake " + version)
+		os.Exit(0)
 	default:
 		fmt.Printf("未知命令: %s\n", cmd)
 		fmt.Println("可用命令: acquire | release | extend | heartbeat | status | stop | hold")
