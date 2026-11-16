@@ -66,7 +66,8 @@ func activeScheme() string {
 	return v
 }
 
-// readPowerValue 读某一项设置（注册表里 ACSettingIndex / DCSettingIndex）
+// readPowerValue 读某一项设置（注册表里 ACSettingIndex / DCSettingIndex）。
+// 读不到的项记 -1：调用方据此「不碰这一项」，避免改了恢复不了。
 func readPowerValue(scheme string, t powerTarget) powerValues {
 	path := powerSchemesKey + `\` + scheme + `\` + t.Sub + `\` + t.Setting
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE)
@@ -74,9 +75,16 @@ func readPowerValue(scheme string, t powerTarget) powerValues {
 		return powerValues{AC: -1, DC: -1}
 	}
 	defer k.Close()
-	ac, _, _ := k.GetIntegerValue("ACSettingIndex")
-	dc, _, _ := k.GetIntegerValue("DCSettingIndex")
-	return powerValues{AC: int(ac), DC: int(dc)}
+	v := powerValues{AC: -1, DC: -1}
+	// 值不存在（未显式设置过）不等于 0（从不）：不能记成 0 再写回去，
+	// 否则会把「跟随方案默认」永久改成「从不」。
+	if ac, _, err := k.GetIntegerValue("ACSettingIndex"); err == nil {
+		v.AC = int(ac)
+	}
+	if dc, _, err := k.GetIntegerValue("DCSettingIndex"); err == nil {
+		v.DC = int(dc)
+	}
+	return v
 }
 
 // captureSnapshot 记录当前睡眠/休眠原值
@@ -124,13 +132,30 @@ func setPowerValue(t powerTarget, ac bool, value int) {
 	setPowerValueFor("", t, ac, value)
 }
 
-// applyKeep 把睡眠/休眠改成「从不」，并让当前方案生效
-func applyKeep() {
-	for _, t := range keepTargets {
-		setPowerValue(t, true, 0)
-		setPowerValue(t, false, 0)
+// applyKeep 把睡眠/休眠改成「从不」，并让当前方案生效。
+// 只改快照里读到的项：读不到原值（-1）的项改了也恢复不了，宁可不动。
+func applyKeep(snap *powerSnapshot) {
+	if snap == nil {
+		return
 	}
-	_, _ = runHidden(powercfgPath(), "/setactive", "SCHEME_CURRENT")
+	changed := false
+	for _, t := range keepTargets {
+		saved, ok := snap.Settings[t.Key]
+		if !ok {
+			continue
+		}
+		if saved.AC >= 0 {
+			setPowerValue(t, true, 0)
+			changed = true
+		}
+		if saved.DC >= 0 {
+			setPowerValue(t, false, 0)
+			changed = true
+		}
+	}
+	if changed {
+		_, _ = runHidden(powercfgPath(), "/setactive", "SCHEME_CURRENT")
+	}
 }
 
 // restoreSnapshot 按快照恢复原值（写回快照记录的那个方案）
