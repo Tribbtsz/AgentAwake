@@ -164,10 +164,12 @@ func (a *app) ensureBar() {
 	} else {
 		a.bar.Hide()
 	}
-	// 首次显示时窗口尺寸可能还没生效，稍后再摆一次位置（保证垂直居中）
+	// 首次显示时窗口尺寸可能还没生效，稍后再摆一次位置（保证垂直居中）。
+	// applyPosition 会碰 a.bar/a.cfg 并调 Win32，必须回主线程——
+	// 与 checkTaskbar/syncBarPresence 的写操作保持同一线程。
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		a.applyPosition()
+		mygo.RunOnMain(a.applyPosition)
 	}()
 	go a.watchTaskbar()
 	go a.keepOnTop()

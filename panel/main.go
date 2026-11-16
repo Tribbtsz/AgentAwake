@@ -139,9 +139,8 @@ func main() {
 
 	// 单实例：面板、托盘、任务栏胶囊都只应该有一份。
 	mygo.App.SetName("AgentAwake")
-	if !mygo.App.RequestSingleInstanceLock() {
-		return // 参数已经转交给正在运行的实例
-	}
+	// handler 必须先于 RequestSingleInstanceLock 注册：锁一开始就起监听，
+	// 晚注册会有一个「已监听但没有 handler」的窗口，转交的打开请求会丢。
 	mygo.App.OnSecondInstance(func(args []string, _ string) {
 		mygo.RunOnMain(func() {
 			if !mygo.App.IsReady() {
@@ -154,8 +153,12 @@ func main() {
 			}
 		})
 	})
+	if !mygo.App.RequestSingleInstanceLock() {
+		return // 参数已经转交给正在运行的实例
+	}
 
-	mygo.App.WhenReady(func() {		// 托盘应用：窗口全关时不退出进程，保持托盘与胶囊常驻
+	mygo.App.WhenReady(func() {
+		// 托盘应用：窗口全关时不退出进程，保持托盘与胶囊常驻
 		mygo.App.OnWindowAllClosed(func() {})
 
 		initFrontend() // 内嵌 HTML/CSS
@@ -179,6 +182,8 @@ func main() {
 			mygo.Separator(),
 			{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) {
 				a.quitting = true
+				// App.Exit 直接销毁窗口、不触发 OnClose；位置要在这里自己存
+				a.rememberPanelPos()
 				logf("panel", "面板退出")
 				mygo.App.Exit(0)
 			}},
@@ -354,7 +359,10 @@ func (a *app) showPanel() {
 		AlwaysOnTop:     true, // 托盘打开的控制面板：置顶，避免被其他窗口盖住
 		BackgroundColor: "#14161a",
 	})
-	a.win.OnClosed(func() { a.rememberPanelPos(); a.win = nil })
+	// 位置要在 OnClose 里存：OnClosed 触发时窗口句柄已清空（native=nil），
+	// 那时再 GetWindowRect 拿不到东西。OnClose 在销毁前、句柄还有效。
+	a.win.OnClose(func(*mygo.CloseEvent) { a.rememberPanelPos() })
+	a.win.OnClosed(func() { a.win = nil })
 	a.shownAt = time.Now()
 	a.win.Show()
 	a.placePanel()

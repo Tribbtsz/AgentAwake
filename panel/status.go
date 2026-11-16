@@ -129,12 +129,10 @@ func evaluateLease(l lease, now time.Time) (state string, active bool, remaining
 		}
 		return "active", true, remaining
 	default: // release
-		if l.PID != 0 {
-			if !processAlive(l.PID, l.PIDStart) {
-				return "process-exited", false, 0
-			}
-			return "active", true, 0
+		if l.PID != 0 && !processAlive(l.PID, l.PIDStart) {
+			return "process-exited", false, 0
 		}
+		// TTL 与 PID 绑定可同时生效：进程活着但卡死时靠心跳超时兜底
 		if l.TTLSeconds > 0 {
 			beat := l.CreatedAt
 			if l.LastBeat != "" {
@@ -217,9 +215,16 @@ func readPower() powerValues {
 			return -1, -1
 		}
 		defer kk.Close()
-		ac, _, _ := kk.GetIntegerValue("ACSettingIndex")
-		dc, _, _ := kk.GetIntegerValue("DCSettingIndex")
-		return int(ac), int(dc)
+		// 值不存在（未显式设置过）记 -1 显示「—」，不能当成 0（从不）：
+		// 「跟随方案默认」和「从不」是两回事。
+		ac, dc := -1, -1
+		if v, _, err := kk.GetIntegerValue("ACSettingIndex"); err == nil {
+			ac = int(v)
+		}
+		if v, _, err := kk.GetIntegerValue("DCSettingIndex"); err == nil {
+			dc = int(v)
+		}
+		return ac, dc
 	}
 	p.SleepAC, p.SleepDC = read(subSleep, setStandby)
 	p.HibAC, p.HibDC = read(subSleep, setHibern)
