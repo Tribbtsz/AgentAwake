@@ -1,0 +1,83 @@
+name: Release
+
+# 推 vX.Y.Z 标签时：测试 → 构建带版本号的两个 exe → 打 zip → 算 SHA256 → 发 GitHub Release
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write # 让 GH_TOKEN 有权创建 Release
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+
+      # 两个模块都要测：cli 与 panel 各自的 go.mod
+      - name: Test
+        shell: pwsh
+        run: |
+          cd cli;   go test -count=1 ./...
+          cd ../panel; go test -count=1 ./...
+
+      # 用构建参数传版本，避免 bat 解析 tag 字符串里的特殊字符
+      - name: Build
+        shell: pwsh
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          cd cli
+          go build -trimpath -ldflags "-s -w -X main.version=$env:VERSION" -o ..\awake.exe .
+          cd ..\panel
+          go build -trimpath -ldflags "-H=windowsgui -s -w -X main.version=$env:VERSION" -o ..\panel.exe .
+
+      - name: Package
+        shell: pwsh
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          New-Item -ItemType Directory dist\AgentAwake | Out-Null
+          Copy-Item awake.exe, panel.exe, README.md, LICENSE, AGENTS.md dist\AgentAwake\
+          Copy-Item docs\design.md dist\AgentAwake\DESIGN.md
+          Compress-Archive -Path dist\AgentAwake -DestinationPath "AgentAwake-$env:VERSION-windows-x64.zip"
+          # 校验和让用户能核对下载完整性；Scoop/winget 等分发渠道也需要它
+          $h = (Get-FileHash "AgentAwake-$env:VERSION-windows-x64.zip" -Algorithm SHA256).Hash.ToLower()
+          "$h  AgentAwake-$env:VERSION-windows-x64.zip" | Out-File "checksums-sha256.txt" -Encoding ascii
+          Get-Content checksums-sha256.txt
+
+      - name: Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          @"
+          ## 下载
+
+          - **AgentAwake-$env:VERSION-windows-x64.zip** — 解压到任意目录，双击 ``panel.exe``。
+
+          校验（PowerShell）：
+
+          ```powershell
+          Get-FileHash AgentAwake-$env:VERSION-windows-x64.zip -Algorithm SHA256
+          ```
+
+          与 checksums-sha256.txt 中的值比对。
+
+          ## 安装
+
+          解压后双击 ``panel.exe``（托盘常驻）；``awake.exe`` 供命令行 / agent 调用。
+          详细用法见仓库 README。
+
+          **注意**：安装包未做代码签名，首次运行如遇 SmartScreen 提示，
+          选「更多信息 → 仍要运行」；也可自行从源码构建（``build.cmd``）。
+          "@ | Out-File release-notes.md -Encoding utf8
+          gh release create "$env:VERSION" "AgentAwake-$env:VERSION-windows-x64.zip" checksums-sha256.txt `
+            --title "AgentAwake $env:VERSION" `
+            --notes-file release-notes.md

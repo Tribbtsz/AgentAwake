@@ -9,10 +9,8 @@
 |---|---|
 | `cli/` | `awake.exe`：租约、守护进程、电源设置、巡检计划任务 |
 | `panel/` | `panel.exe`：托盘、任务栏胶囊、面板；`panel/web/` 是内嵌前端 |
-| `build.cmd` | 一次构建两个可执行文件 |
-| `docs-added/` | 本地参考文档（不提交） |
-| `tmp-workspace/` | 临时文件（不提交） |
-| `agents-added/` | agent 附加说明（不提交） |
+| `docs/` | 面向用户的截图与设计文档（`design.md`） |
+| `build.cmd` | 一次构建两个可执行文件；`build.cmd vX.Y.Z` 注入版本号 |
 
 ## 命令
 
@@ -28,10 +26,10 @@ cd panel; go test ./...; go build ./...
 
 - 纯 Go、无 cgo；系统 API 走 `golang.org/x/sys/windows` 或 `syscall`。
 - 不写死盘符或用户路径：可执行文件用 `os.Executable()`，数据用 `%LOCALAPPDATA%`。
-- 不提交 `*.exe`、日志、临时文件、密钥；`docs-added/` 与 `tmp-workspace/` 已忽略。
+- 不提交 `*.exe`、日志、临时文件、密钥。
 - 注释用中文，解释原因；界面文案统一中文。
 - 面板的 Go ↔ JS 接口集中在 `panel/webapi.go`，DTO 字段与 `web/app.js` 对齐。
-- 后台 goroutine 不直接操作 UI，回到主线程用 `RunOnMain` / `Update`。
+- 后台 goroutine 不直接操作 UI，回到主线程用 `RunOnMain` / `Update`；
+  `onUI` 依赖 mygo `RunOnMain` 主线程重入直接执行的语义（见 `docs/design.md`）。
 - 提交使用约定式提交消息（`feat:` / `fix:` / `docs:` / `chore:` …）。
-
-更细的框架与 Windows 机制笔记见 `docs-added/`（本地，不入库）。
+- 发版：更新版本号 → tag `vX.Y.Z` → GitHub Actions 自动构建发布（见 `.github/workflows/release.yml`）。
