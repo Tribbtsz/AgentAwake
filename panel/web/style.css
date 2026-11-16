@@ -88,6 +88,11 @@ body::-webkit-scrollbar { width: 0; height: 0; }
   color: var(--faint);
   opacity: .75;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 .spacer { flex: 1; }
 
@@ -218,6 +223,8 @@ button.ghost {
   font-size: 12px;
   color: var(--muted);
   border-radius: 9px;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 button.ghost:hover { background: var(--panel-strong); color: var(--text); }
 button.ghost.close:hover { color: var(--danger); }
@@ -311,6 +318,73 @@ button.ghost.close:hover { color: var(--danger); }
 .actions { margin-top: auto; padding-top: 4px; }
 .btn-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .btn-row button { padding: 7px 11px; font-size: 12px; }
+
+/* ---------- 历史页：固定窗口高度，列表内部滚动 ---------- */
+main#pageHistory {
+  gap: 8px;
+  padding-bottom: 6px;
+}
+main#pageHistory .lease-list { padding-top: 0; }
+.history-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+/* 历史行：单行紧凑（点 + 名称 + 原因 + 时间 + 持续），不做卡片 */
+.hrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  animation: fade var(--dur) var(--ease);
+}
+.hrow:hover { background: var(--panel); }
+
+/* 状态点：跟着结束原因走——中性灰、警示琥珀（达到上限/心跳超时） */
+.hdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: rgba(200, 205, 212, 0.45);
+}
+.hrow.warn .hdot { background: var(--warn); }
+
+.hname {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hreason {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--faint);
+}
+.hreason.warn { color: var(--warn); }
+.hmeta {
+  flex: 1 1 auto;
+  text-align: right;
+  font-size: 10.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.hdur {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.hrow.warn .hdur { color: var(--warn); }
+
+#clearHistoryBtn.danger { color: var(--danger); }
+#clearHistoryBtn.danger:hover { color: var(--danger); opacity: 1; }
 
 /* ---------- 设置页：内间距收紧 ---------- */
 main#pageSettings {

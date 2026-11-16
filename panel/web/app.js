@@ -56,16 +56,23 @@ const ICONS = {
 };
 
 // ---------- 页面 ----------
+// 三页：状态 / 历史 / 设置。「当前页」的导航按钮显示「返回」（回状态页），
+// 另一页的按钮直跳——与原来 设置↔返回 的 morph 逻辑同构。
 function showPage(name) {
   page = name;
   $('pageStatus').hidden = name !== 'status';
+  $('pageHistory').hidden = name !== 'history';
   $('pageSettings').hidden = name !== 'settings';
   $('navBtn').textContent = name === 'status' ? '设置' : '返回';
+  $('navHistoryBtn').textContent = name === 'history' ? '返回' : '历史';
   const applied = call('SetPage', name).catch(() => {});
   if (name === 'settings') {
     $('pageSettings').scrollTop = 0;
     // 设置页内容固定，窗口高度按内容贴合（等后端确认页面已切过去再量）
     applied.then(fitSettingsWindow);
+  }
+  if (name === 'history') {
+    $('historyList').scrollTop = 0;
   }
 }
 
@@ -90,6 +97,7 @@ function fitSettingsWindow() {
 }
 
 $('navBtn').onclick = () => showPage(page === 'status' ? 'settings' : 'status');
+$('navHistoryBtn').onclick = () => showPage(page === 'status' ? 'history' : 'status');
 $('closeBtn').onclick = () => window.mygo.window.close();
 
 // ---------- Agent 提示词 ----------
@@ -180,6 +188,86 @@ $('promptReset').onclick = async () => {
     toast('读取默认提示词失败');
   }
 };
+
+// ---------- 租约历史 ----------
+let historyClearArmed = false; // 清空按钮两段式确认：第一次点亮，3 秒内再点才执行
+let historyClearTimer;
+
+async function loadHistory() {
+  if (page !== 'history') return;
+  let rows = [];
+  try {
+    rows = await call('History');
+  } catch {
+    // 读不到就保持现状，下一秒轮询再试
+    return;
+  }
+  const box = $('historyList');
+  const sig = JSON.stringify(rows.map(r => [r.id, r.end]));
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+
+  box.innerHTML = '';
+  $('historyCount').textContent = rows.length >= 200 ? '· 最近 200 条' : `· 共 ${rows.length} 条`;
+  if (rows.length === 0) return; // 空态样式由 CSS :empty::after 呈现
+
+  for (const r of rows) {
+    const el = document.createElement('div');
+    el.className = 'hrow' + (r.kind === 'warn' ? ' warn' : '');
+    // 状态点：中性灰、警示琥珀；文本里原因与持续时长着色
+    const dot = document.createElement('span');
+    dot.className = 'hdot';
+    el.appendChild(dot);
+    const name = document.createElement('span');
+    name.className = 'hname';
+    name.textContent = r.name || '(未命名)';
+    el.appendChild(name);
+    const reason = document.createElement('span');
+    reason.className = 'hreason' + (r.kind === 'warn' ? ' warn' : '');
+    reason.textContent = r.reason;
+    el.appendChild(reason);
+    const meta = document.createElement('span');
+    meta.className = 'hmeta';
+    meta.textContent = `${r.start} → ${r.end}`;
+    el.appendChild(meta);
+    const dur = document.createElement('span');
+    dur.className = 'hdur';
+    dur.textContent = r.duration;
+    el.appendChild(dur);
+    box.appendChild(el);
+  }
+}
+
+$('clearHistoryBtn').onclick = async () => {
+  const btn = $('clearHistoryBtn');
+  if (!historyClearArmed) {
+    historyClearArmed = true;
+    btn.textContent = '确认清空';
+    btn.classList.add('danger');
+    clearTimeout(historyClearTimer);
+    historyClearTimer = setTimeout(disarmClear, 3000);
+    return;
+  }
+  disarmClear();
+  try {
+    await callPending('ClearHistory');
+    toast('已清空');
+    const box = $('historyList');
+    box.dataset.sig = '';
+    box.innerHTML = '';
+    $('historyCount').textContent = '';
+  } catch {
+    toast('清空失败');
+  }
+};
+
+function disarmClear() {
+  historyClearArmed = false;
+  clearTimeout(historyClearTimer);
+  const btn = $('clearHistoryBtn');
+  btn.textContent = '清空';
+  btn.classList.remove('danger');
+}
 
 // ---------- 等待 / 异常反馈 ----------
 let pending = 0;
@@ -439,6 +527,8 @@ async function refresh() {
   } finally {
     refreshing = false;
   }
+  // 历史页可见时顺带刷新历史（租约结束要能实时出现在列表里）
+  if (page === 'history') await loadHistory();
 }
 
 refresh();

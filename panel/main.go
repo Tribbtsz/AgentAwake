@@ -77,7 +77,7 @@ type app struct {
 	overTaskbar     bool      // 覆盖模式：顶层窗口压在任务栏空白区
 	barSuppressed   bool      // 任务栏被隐藏/全屏时临时收起胶囊
 	barW            int       // 任务栏胶囊宽度（跟随内容）
-	page            panelPage // 当前页：状态 / 设置
+	page            panelPage // 当前页：状态 / 历史 / 设置
 	reservedRows    int       // 操作进行中预占的租约行数（先长高，避免结果出现时跳一下）
 	settingsH       int       // 设置页量出的内容高度（0 表示还没量过）
 	startPage       string    // 启动时打开的页面
@@ -90,6 +90,7 @@ type panelPage int
 
 const (
 	pageStatus panelPage = iota
+	pageHistory
 	pageSettings
 )
 
@@ -120,15 +121,19 @@ func main() {
 	a.snap = readSnapshot()
 
 	// --panel：启动时直接打开面板（也方便快捷方式/命令行调用）
+	// --history / --settings：启动时直接进对应页（托盘菜单与验收用）
 	openOnStart := false
 	a.debugToast = os.Getenv("AGENTAWAKE_DEMO_TOAST")
 	for _, arg := range os.Args[1:] {
-		if arg == "--panel" || arg == "-panel" {
+		switch strings.ToLower(arg) {
+		case "--panel", "-panel":
 			openOnStart = true
-		}
-		if arg == "--settings" || arg == "-settings" {
+		case "--settings", "-settings":
 			openOnStart = true
 			a.startPage = "settings"
+		case "--history", "-history":
+			openOnStart = true
+			a.startPage = "history"
 		}
 	}
 
@@ -150,8 +155,7 @@ func main() {
 		})
 	})
 
-	mygo.App.WhenReady(func() {
-		// 托盘应用：窗口全关时不退出进程，保持托盘与胶囊常驻
+	mygo.App.WhenReady(func() {		// 托盘应用：窗口全关时不退出进程，保持托盘与胶囊常驻
 		mygo.App.OnWindowAllClosed(func() {})
 
 		initFrontend() // 内嵌 HTML/CSS
@@ -333,8 +337,8 @@ func (a *app) showPanel() {
 	}
 	// 胶囊由 mygo 原生 ui 绘制（barnative.go）；只有面板是网页
 	startH := a.statusHeight()
-	if a.startPage == "settings" {
-		startH = settingsHeight
+	if a.startPage == "settings" || a.startPage == "history" {
+		startH = settingsHeight // 内容页首帧高度，进页后 FitHeight 修正
 	}
 	a.win = mygo.NewWindow(mygo.WindowOptions{
 		Title:           "AgentAwake",

@@ -41,6 +41,8 @@ type options struct {
 	pidFile      string
 	timeoutHours int
 	ttlSeconds   int
+	limit        int
+	clear        bool
 	all          bool
 	jsonOut      bool
 	watchdog     bool
@@ -86,12 +88,14 @@ func main() {
 		os.Exit(cmdStop())
 	case "status", "list":
 		os.Exit(cmdStatus(o))
+	case "history":
+		os.Exit(cmdHistory(o))
 	case "version", "-v", "--version":
 		fmt.Println("awake " + version)
 		os.Exit(0)
 	default:
 		fmt.Printf("未知命令: %s\n", cmd)
-		fmt.Println("可用命令: acquire | release | extend | heartbeat | status | stop | hold")
+		fmt.Println("可用命令: acquire | release | extend | heartbeat | status | history | stop | hold")
 		os.Exit(2)
 	}
 }
@@ -139,6 +143,17 @@ func parseArgs(args []string) (*options, []string, error) {
 			o.all = true
 		case "json":
 			o.jsonOut = true
+		case "clear":
+			o.clear = true
+		case "n":
+			v, err := need()
+			if err != nil {
+				return nil, nil, err
+			}
+			o.limit, err = strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || o.limit <= 0 {
+				return nil, nil, fmt.Errorf("-%s 需要一个正整数：%s", key, v)
+			}
 		case "watchdog":
 			o.watchdog = true
 		case "name":
@@ -361,6 +376,7 @@ func cmdRelease(o *options) int {
 	ids := make([]string, 0, len(targets))
 	for _, t := range targets {
 		removeLease(t.ID)
+		recordLeaseEnd(t, time.Now(), "released")
 		ids = append(ids, t.ID)
 		logf("awake", "主动释放租约 %s [%s] key=%s", t.ID, t.Name, t.Key)
 	}
@@ -446,6 +462,7 @@ func cmdStop() int {
 	all := loadLeases()
 	for _, l := range all {
 		removeLease(l.ID)
+		recordLeaseEnd(l, time.Now(), "stopped")
 	}
 	if len(all) > 0 {
 		logf("awake", "stop：释放全部 %d 个租约", len(all))
@@ -613,6 +630,61 @@ func isWideRune(r rune) bool {
 		(r >= 0xFFE0 && r <= 0xFFE6)
 }
 
+// ---------- 历史 ----------
+
+func cmdHistory(o *options) int {
+	if o.clear {
+		clearHistory()
+		fmt.Println("已清空租约历史。")
+		return 0
+	}
+	all := loadHistory()
+	if o.jsonOut {
+		// 倒序（最新在前）输出；-n 限制条数
+		n := o.limit
+		if n <= 0 || n > len(all) {
+			n = len(all)
+		}
+		out := make([]HistoryEntry, 0, n)
+		for i := len(all) - 1; i >= len(all)-n; i-- {
+			out = append(out, all[i])
+		}
+		printJSON(out)
+		return 0
+	}
+	if len(all) == 0 {
+		fmt.Println("暂无租约历史。")
+		return 0
+	}
+	n := o.limit
+	if n <= 0 {
+		n = 20
+	}
+	if n > len(all) {
+		n = len(all)
+	}
+	fmt.Printf("最近 %d 条租约（共 %d 条）\n", n, len(all))
+	for i := len(all) - 1; i >= len(all)-n; i-- {
+		e := all[i]
+		start := humanTime(e.CreatedAt)
+		end := humanTime(e.EndedAt)
+		// 同一天内省掉结束日期，跨天补全
+		if len(start) >= 11 && len(end) >= 11 && start[:11] == end[:11] {
+			end = "       " + end[11:]
+		}
+		fmt.Printf("  %s → %s  %s  %s  %s",
+			start, end,
+			padRight(formatHistoryDuration(e.DurationSec), 10),
+			padRight(historyReasonText(e.EndReason), 10),
+			padRight(e.Name, 20))
+		if e.Key != "" {
+			fmt.Printf(" %s", e.Key)
+		}
+		fmt.Println()
+	}
+	return 0
+}
+
 // ---------- 小工具 ----------
 
 func printJSON(v any) {
@@ -685,6 +757,8 @@ func printHelp() {
   awake extend -for 2h -all           延长到期时间
   awake heartbeat -id 3f2a            刷新心跳（不绑定进程时用）
   awake status [-json]                查看状态
+  awake history [-n 50] [-json]       租约历史（申请/结束时间、持续、结束原因）
+  awake history -clear                清空历史
   awake stop                          立刻停止全部保持
 
 时间格式: 90s / 30m / 1.5h / 2d / 30分钟 / 2小时 / 06:00 / 2026-11-15T06:00

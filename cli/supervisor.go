@@ -73,14 +73,14 @@ func runSupervisor() int {
 	var lastHeal time.Time
 	var idleSince time.Time
 	var lastSaved string
-	idleTicks := 0
 
 	for {
 		now = time.Now()
 
-		// 清掉已失效的租约文件，并记下原因
+		// 清掉已失效的租约文件，并记下原因（历史账本里定时类用真实到期点）
 		for _, l := range loadLeases() {
 			if reason := inactiveReason(l, now); reason != "" {
+				recordLeaseEnd(l, leaseEndTime(l, now, reason), reason)
 				logf("supervisor", "租约结束 %s [%s] key=%s 原因=%s", l.ID, l.Name, l.Key, reason)
 				removeLease(l.ID)
 			}
@@ -90,7 +90,6 @@ func runSupervisor() int {
 
 		if len(active) > 0 {
 			idleSince = time.Time{}
-			idleTicks = 0
 
 			if rt.Mode != "keep" {
 				// 第一次进入保持：先记原值，再改
@@ -144,13 +143,10 @@ func runSupervisor() int {
 			if idleSince.IsZero() {
 				idleSince = now
 			}
-			idleTicks++
 			// 空闲够久、且确实没有租约了，就收摊
-			if idleTicks%15 == 0 {
-				logf("supervisor", "空闲中 %.0f 秒，租约 %d 个", now.Sub(idleSince).Seconds(), len(loadLeases()))
-			}
+			// （空闲期不再逐 15 秒刷日志：进入空闲与空闲退出本就有记录，事件流要干净）
 			if now.Sub(idleSince) >= idleExitAfter && len(loadLeases()) == 0 {
-				logf("supervisor", "空闲退出")
+				logf("supervisor", "空闲 %.0f 秒后退出", now.Sub(idleSince).Seconds())
 				removeWatchdogTask()
 				break
 			}
