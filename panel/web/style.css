@@ -5,6 +5,8 @@
   --text: #e6e8ec;
   --muted: rgba(230, 232, 236, 0.5);
   --faint: rgba(230, 232, 236, 0.34);
+  /* 日志正文：比 muted 亮一档，小字号下才不显得糊 */
+  --text-soft: rgba(230, 232, 236, 0.82);
   --panel: rgba(255, 255, 255, 0.038);
   --panel-strong: rgba(255, 255, 255, 0.058);
   --accent: #8fa6c4;        /* 柔和雾蓝，不用绿色 */
@@ -24,6 +26,7 @@
     --text: #23262b;
     --muted: rgba(35, 38, 43, 0.55);
     --faint: rgba(35, 38, 43, 0.4);
+    --text-soft: rgba(35, 38, 43, 0.82);
     --panel: rgba(255, 255, 255, 0.78);
     --panel-strong: rgba(255, 255, 255, 0.95);
     --accent: #6d7f96;
@@ -44,7 +47,8 @@ html, body {
   color: var(--text);
   font: 13px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
         "PingFang SC", "Microsoft YaHei UI", sans-serif;
-  -webkit-font-smoothing: antialiased;
+  /* 不要用 -webkit-font-smoothing: antialiased：Windows 上会关掉子像素渲染，
+     小字号发虚（这正是面板字看着「糊」的原因） */
   user-select: none;
 }
 
@@ -355,21 +359,21 @@ main#pageLog {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 4px 8px;
+  padding: 5px 8px;
   border-radius: 7px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
 }
 .lrow:hover { background: var(--panel); }
 .ltime {
   flex: 0 0 auto;
-  color: var(--faint);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 .lsrc {
   flex: 0 0 auto;
-  font-size: 10px;
-  color: var(--faint);
+  font-size: 11px;
+  color: var(--muted);
   min-width: 62px;
 }
 /* 来源着色：awake 雾蓝、supervisor 绿、panel 中性、watchdog 琥珀 */
@@ -382,7 +386,7 @@ main#pageLog {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--muted);
+  color: var(--text-soft);
   user-select: text;
   /* 给右侧悬浮「复制」按钮让位，避免盖住行尾文字 */
   padding-right: 44px;
