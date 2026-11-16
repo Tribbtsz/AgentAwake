@@ -251,11 +251,27 @@ func saveLease(l *Lease) error {
 		return err
 	}
 	path := filepath.Join(leaseDir(), l.ID+".json")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
+	// 临时文件用 CreateTemp 生成唯一名字：heartbeat 与 extend 并发写同一张
+	// 租约时，固定 tmp 名会互相截断，产出坏 JSON 后被 loadLeases 当坏文件删掉。
+	f, err := os.CreateTemp(leaseDir(), l.ID+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmp := f.Name()
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func removeLease(id string) {
@@ -333,13 +349,11 @@ func inactiveReason(l Lease, now time.Time) string {
 		}
 		return ""
 	}
-	// mode = release：等调用方主动释放，或绑定进程退出，或心跳超时
-	if l.PID != 0 {
-		if !processAlive(l.PID, l.PIDStart) {
-			return "process-exited"
-		}
-		return ""
+	// mode = release：绑定的进程退出、心跳超时、或调用方主动释放
+	if l.PID != 0 && !processAlive(l.PID, l.PIDStart) {
+		return "process-exited"
 	}
+	// TTL 与 PID 绑定可以同时用：进程活着但卡死时，心跳超时是最后一道兜底
 	if l.TTLSeconds > 0 {
 		beat := l.LastBeat
 		if beat == "" {

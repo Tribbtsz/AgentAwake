@@ -152,3 +152,22 @@ func TestHistoryReasonText(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// 绑定 PID 时 TTL 也要生效：进程活着但卡死时靠心跳超时兜底
+func TestTTLWithPIDBound(t *testing.T) {
+	now := time.Now()
+	l := Lease{
+		Mode: "release", MaxUntil: stamp(now.Add(time.Hour)),
+		PID: os.Getpid(), PIDStart: 0, // 0 = 不校验创建时间，测试里用
+		TTLSeconds: 60, LastBeat: stamp(now.Add(-2 * time.Minute)),
+		CreatedAt: stamp(now.Add(-10 * time.Minute)),
+	}
+	if r := inactiveReason(l, now); r != "heartbeat-timeout" {
+		t.Errorf("PID 活着但心跳超时应失效，得到 %q", r)
+	}
+	// 心跳新鲜时仍有效
+	l.LastBeat = stamp(now)
+	if r := inactiveReason(l, now); r != "" {
+		t.Errorf("心跳新鲜时不应失效，得到 %q", r)
+	}
+}

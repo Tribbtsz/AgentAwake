@@ -34,18 +34,33 @@ func saveRuntime(rt *Runtime) {
 	_, _ = writeRuntime(rt)
 }
 
-// writeRuntime 写入并返回序列化结果（给「内容没变就不写」用）
+// writeRuntime 写入并返回序列化结果（给「内容没变就不写」用）。
+// tmp 名唯一：supervisor 与 `awake stop` 可能同时写 runtime.json。
 func writeRuntime(rt *Runtime) (string, error) {
 	ensureDirs()
 	b, err := json.MarshalIndent(rt, "", "  ")
 	if err != nil {
 		return "", err
 	}
-	tmp := runtimePath() + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
+	f, err := os.CreateTemp(dataDir(), "runtime.*.tmp")
+	if err != nil {
 		return string(b), err
 	}
-	return string(b), os.Rename(tmp, runtimePath())
+	tmp := f.Name()
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return string(b), err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return string(b), err
+	}
+	if err := os.Rename(tmp, runtimePath()); err != nil {
+		_ = os.Remove(tmp)
+		return string(b), err
+	}
+	return string(b), nil
 }
 
 // saveRuntimeIfChanged 守护进程每秒循环，内容没变就不要反复写盘
