@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -110,13 +111,39 @@ func taskExists() bool {
 	return err == nil
 }
 
-// taskPointsToUs 任务的动作是否已经指向当前 exe（迁移目录后要重新注册）
+// taskPointsToUs 任务的动作是否已经指向当前 exe（迁移目录后要重新注册）。
+// 用「取 Command 原文 + 反转义」再比：schtasks 输出把 & 转义成 &amp;，
+// 拿原始路径做子串匹配时，路径含 & 就会永远匹配不上、每次 acquire 都重注册任务。
+//
+// 注意不能用 encoding/xml：schtasks 的输出声明 encoding="UTF-16"，
+// 实际字节是本地 ANSI（中文乱码），Go 的 XML 解码器两种方式都会报错。
+// 路径本身是 ASCII，正则取 Command 内容 + 手工反转义足够可靠。
 func taskPointsToUs() bool {
 	out, err := schtasks("/Query", "/TN", taskName, "/XML", "ONE")
 	if err != nil {
 		return false
 	}
-	return strings.Contains(strings.ToLower(out), strings.ToLower(exePath()))
+	if cmd, ok := taskCommand(out); ok {
+		return strings.EqualFold(strings.TrimSpace(cmd), exePath())
+	}
+	return false
+}
+
+var commandRe = regexp.MustCompile(`(?s)<Command>(.*?)</Command>`)
+
+// taskCommand 从任务 XML 里取出 <Exec><Command> 的原文（已反转义）
+func taskCommand(xmlOut string) (string, bool) {
+	m := commandRe.FindStringSubmatch(xmlOut)
+	if m == nil {
+		return "", false
+	}
+	return xmlUnescape(m[1]), true
+}
+
+// xmlUnescape 反转义 XML 实体（schtasks 输出里实际只会出现这几个）
+func xmlUnescape(s string) string {
+	r := strings.NewReplacer("&lt;", "<", "&gt;", ">", "&quot;", `"`, "&apos;", "'", "&amp;", "&")
+	return r.Replace(s)
 }
 
 // registerWatchdogTask 注册（或更新）巡检任务

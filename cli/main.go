@@ -483,6 +483,13 @@ func cmdStop() int {
 	}
 	if rt := readRuntime(); rt != nil && rt.Mode == "keep" {
 		restoreSnapshot(rt.Snapshot)
+		// 手动恢复后必须把状态写回 idle：否则界面会一直显示「保持中」，
+		// 而电源其实已经恢复了（守护进程若已死，这个错状态会一直留着）。
+		rt.Mode = "idle"
+		rt.Snapshot = nil
+		rt.ActiveCount = 0
+		rt.LeaseIDs = nil
+		saveRuntime(rt)
 		logf("awake", "stop：守护进程未及时恢复，已手动恢复")
 	}
 	fmt.Println("已停止保持，电源设置恢复原值。")
@@ -543,14 +550,17 @@ func cmdStatus(o *options) int {
 	holding := activeCount > 0 || (rt != nil && rt.Mode == "keep")
 
 	if o.jsonOut {
+		taskOK := taskExists()
 		printJSON(map[string]any{
 			"holding":       holding,
 			"leases":        rows,
 			"power":         power,
 			"supervisorPid": nilIfZero(supPID),
-			"watchdogTask":  taskExists(),
-			"runtimeMode":   nilIfEmpty(runtimeMode(rt)),
-			"lastHeal":      nilIfEmpty(runtimeLastHeal(rt)),
+			"watchdogTask":  taskOK,
+			// 任务是否指向当前 exe：搬过目录后为 false，watchdog 拉不起新进程
+			"watchdogTaskCurrent": taskOK && taskPointsToUs(),
+			"runtimeMode":         nilIfEmpty(runtimeMode(rt)),
+			"lastHeal":            nilIfEmpty(runtimeLastHeal(rt)),
 		})
 		return 0
 	}
@@ -569,6 +579,12 @@ func cmdStatus(o *options) int {
 	taskText := "无"
 	if taskExists() {
 		taskText = "已注册"
+		// 搬过目录后任务可能仍指向旧 exe：这里顺手自愈，否则状态显示
+		// 「已注册」但 watchdog 永远拉不起新进程。
+		if !taskPointsToUs() {
+			registerWatchdogTask()
+			taskText = "已注册（已更新路径）"
+		}
 	}
 	fmt.Printf("守护进程: %s    巡检任务: %s\n", supText, taskText)
 	fmt.Println()
@@ -644,9 +660,12 @@ func cmdHistory(o *options) int {
 	}
 	all := loadHistory()
 	if o.jsonOut {
-		// 倒序（最新在前）输出；-n 限制条数
+		// 默认条数与文本模式一致（最近 20 条），-n 显式指定更多
 		n := o.limit
-		if n <= 0 || n > len(all) {
+		if n <= 0 {
+			n = 20
+		}
+		if n > len(all) {
 			n = len(all)
 		}
 		out := make([]HistoryEntry, 0, n)
