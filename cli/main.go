@@ -374,11 +374,12 @@ func cmdRelease(o *options) int {
 		return 1
 	}
 	ids := make([]string, 0, len(targets))
+	now := time.Now()
 	for _, t := range targets {
 		removeLease(t.ID)
-		recordLeaseEnd(t, time.Now(), "released")
+		recordLeaseEnd(t, now, "released")
 		ids = append(ids, t.ID)
-		logf("awake", "主动释放租约 %s [%s] key=%s", t.ID, t.Name, t.Key)
+		logf("awake", "主动释放租约 %s [%s] key=%s 持续=%s", t.ID, t.Name, t.Key, leaseHoldDuration(t, now))
 	}
 	left := len(loadLeases())
 
@@ -460,9 +461,12 @@ func cmdHeartbeat(o *options) int {
 
 func cmdStop() int {
 	all := loadLeases()
+	now := time.Now()
 	for _, l := range all {
 		removeLease(l.ID)
-		recordLeaseEnd(l, time.Now(), "stopped")
+		recordLeaseEnd(l, now, "stopped")
+		// 逐条记「手动停止」，日志页才看得到是谁被手动取消了
+		logf("awake", "手动停止租约 %s [%s] key=%s 持续=%s", l.ID, l.Name, l.Key, leaseHoldDuration(l, now))
 	}
 	if len(all) > 0 {
 		logf("awake", "stop：释放全部 %d 个租约", len(all))

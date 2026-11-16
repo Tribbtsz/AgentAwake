@@ -274,8 +274,8 @@ const (
 	// settingsHeight 是设置页的首帧高度；页面量好真实内容高度后会调用
 	// FitHeight 修正，避免窗口打开瞬间底部被裁掉。
 	settingsHeight = 512
-	// historyFixedHeight 历史页固定高度：列表内部滚动，窗口不随条数伸缩
-	historyFixedHeight = 480
+	// logFixedHeight 日志页固定高度：列表内部滚动，窗口不随内容伸缩
+	logFixedHeight = 480
 )
 
 // SetPage 切换页面时同步调整窗口高度（状态页按租约数，历史/设置页按内容）
@@ -295,9 +295,9 @@ func (api Api) SetPage(name string) bool {
 				h = settingsHeight
 			}
 			api.a.win.SetSize(panelWidth, h)
-		case "history":
-			api.a.page = pageHistory
-			api.a.win.SetSize(panelWidth, historyFixedHeight)
+		case "log":
+			api.a.page = pageLog
+			api.a.win.SetSize(panelWidth, logFixedHeight)
 		default:
 			api.a.page = pageStatus
 			api.a.win.SetSize(panelWidth, api.a.statusHeight())
@@ -339,9 +339,10 @@ func (a *app) statusHeight() int {
 	return h
 }
 
-// fitPanel 状态变化后按内容调整窗口高度
+// fitPanel 状态变化后按内容调整窗口高度。
+// 只对状态页生效：日志/设置页有各自的固定或量高高度，不能被轮询拽回去。
 func (a *app) fitPanel() {
-	if a.win == nil || a.page == pageSettings {
+	if a.win == nil || a.page != pageStatus {
 		return
 	}
 	a.win.SetSize(panelWidth, a.statusHeight())
@@ -463,61 +464,6 @@ func clampInt(v, lo, hi int) int {
 		return hi
 	}
 	return v
-}
-
-// ---------- 历史 ----------
-
-// panelHistoryMax 面板最多渲染的历史条数：更多请用 awake history 查
-const panelHistoryMax = 200
-
-// historyDTO 已格式化的历史行（Go 算好文本，JS 只渲染）
-type historyDTO struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Reason   string `json:"reason"`   // 结束原因文案
-	Kind     string `json:"kind"`     // "" 中性 | "warn"
-	Start    string `json:"start"`    // 申请时间（当天省日期）
-	End      string `json:"end"`      // 结束时间（同上）
-	Duration string `json:"duration"` // 持续时长文案
-	EndedAt  string `json:"endedAt"`  // 原始结束时间，排序用
-}
-
-// History 租约历史（最新在前，最多 panelHistoryMax 条）
-func (api Api) History() []historyDTO {
-	if api.a == nil {
-		return []historyDTO{}
-	}
-	return onUI(func() []historyDTO {
-		all := readHistory()
-		out := make([]historyDTO, 0, panelHistoryMax)
-		now := time.Now()
-		for i := len(all) - 1; i >= 0 && len(out) < panelHistoryMax; i-- {
-			e := all[i]
-			out = append(out, historyDTO{
-				ID:       e.ID,
-				Name:     e.Name,
-				Reason:   historyReasonText(e.EndReason),
-				Kind:     historyReasonKind(e.EndReason),
-				Start:    historyTimeText(e.CreatedAt, now),
-				End:      historyTimeText(e.EndedAt, now),
-				Duration: historyDurationText(e.DurationSec),
-				EndedAt:  e.EndedAt,
-			})
-		}
-		return out
-	})
-}
-
-// ClearHistory 清空租约历史
-func (api Api) ClearHistory() bool {
-	if api.a == nil {
-		return false
-	}
-	return onUI(func() bool {
-		clearHistoryLocal()
-		logf("panel", "清空租约历史")
-		return true
-	})
 }
 
 // ---------- 供界面/原生共用的辅助 ----------

@@ -56,23 +56,24 @@ const ICONS = {
 };
 
 // ---------- 页面 ----------
-// 三页：状态 / 历史 / 设置。「当前页」的导航按钮显示「返回」（回状态页），
-// 另一页的按钮直跳——与原来 设置↔返回 的 morph 逻辑同构。
+// 三页：状态 / 日志 / 设置。每个按钮只管自己的页：当前页的按钮显示「返回」
+// （回状态页），另一页按钮直跳——两个按钮各司其职，不会同时变「返回」。
 function showPage(name) {
   page = name;
   $('pageStatus').hidden = name !== 'status';
-  $('pageHistory').hidden = name !== 'history';
+  $('pageLog').hidden = name !== 'log';
   $('pageSettings').hidden = name !== 'settings';
-  $('navBtn').textContent = name === 'status' ? '设置' : '返回';
-  $('navHistoryBtn').textContent = name === 'history' ? '返回' : '历史';
+  $('navBtn').textContent = name === 'settings' ? '返回' : '设置';
+  $('navLogBtn').textContent = name === 'log' ? '返回' : '日志';
   const applied = call('SetPage', name).catch(() => {});
   if (name === 'settings') {
     $('pageSettings').scrollTop = 0;
     // 设置页内容固定，窗口高度按内容贴合（等后端确认页面已切过去再量）
     applied.then(fitSettingsWindow);
   }
-  if (name === 'history') {
-    $('historyList').scrollTop = 0;
+  if (name === 'log') {
+    $('logList').scrollTop = 0;
+    loadLog(); // 进页立刻拉，不等 1 秒轮询
   }
 }
 
@@ -96,8 +97,8 @@ function fitSettingsWindow() {
   call('FitHeight', h + 2).catch(() => {});
 }
 
-$('navBtn').onclick = () => showPage(page === 'status' ? 'settings' : 'status');
-$('navHistoryBtn').onclick = () => showPage(page === 'status' ? 'history' : 'status');
+$('navBtn').onclick = () => showPage(page === 'settings' ? 'status' : 'settings');
+$('navLogBtn').onclick = () => showPage(page === 'log' ? 'status' : 'log');
 $('closeBtn').onclick = () => window.mygo.window.close();
 
 // ---------- Agent 提示词 ----------
@@ -189,82 +190,98 @@ $('promptReset').onclick = async () => {
   }
 };
 
-// ---------- 租约历史 ----------
-let historyClearArmed = false; // 清空按钮两段式确认：第一次点亮，3 秒内再点才执行
-let historyClearTimer;
+// ---------- 日志页 ----------
+// 读 awake.log 的尾部：申请/释放/手动停止/守护进程/错误都在里面。
+// 最新在前；1 秒轮询 + 进页立即拉，事件发生后基本上一秒内可见。
+let logClearArmed = false; // 清空按钮两段式确认：第一次点亮，3 秒内再点才执行
+let logClearTimer;
+let lastLogSig = '';
 
-async function loadHistory() {
-  if (page !== 'history') return;
+async function loadLog() {
+  if (page !== 'log') return;
   let rows = [];
   try {
-    rows = await call('History');
+    rows = await call('Log');
   } catch {
     // 读不到就保持现状，下一秒轮询再试
     return;
   }
-  const box = $('historyList');
-  const sig = JSON.stringify(rows.map(r => [r.id, r.end]));
-  if (box.dataset.sig === sig) return;
-  box.dataset.sig = sig;
+  // 只有内容真的变了才重建 DOM：最后一行（最新）的时间+文本变化即代表有新事件
+  const top = rows[0] ? rows[0].time + '|' + rows[0].text : '';
+  const sig = rows.length + '|' + top;
+  if (sig === lastLogSig) return;
+  lastLogSig = sig;
 
+  const box = $('logList');
   box.innerHTML = '';
-  $('historyCount').textContent = rows.length >= 200 ? '· 最近 200 条' : `· 共 ${rows.length} 条`;
+  $('logCount').textContent = rows.length >= 300 ? '· 最近 300 行' : (rows.length ? `· ${rows.length} 行` : '');
   if (rows.length === 0) return; // 空态样式由 CSS :empty::after 呈现
 
   for (const r of rows) {
     const el = document.createElement('div');
-    el.className = 'hrow' + (r.kind === 'warn' ? ' warn' : '');
-    // 状态点：中性灰、警示琥珀；文本里原因与持续时长着色
-    const dot = document.createElement('span');
-    dot.className = 'hdot';
-    el.appendChild(dot);
-    const name = document.createElement('span');
-    name.className = 'hname';
-    name.textContent = r.name || '(未命名)';
-    el.appendChild(name);
-    const reason = document.createElement('span');
-    reason.className = 'hreason' + (r.kind === 'warn' ? ' warn' : '');
-    reason.textContent = r.reason;
-    el.appendChild(reason);
-    const meta = document.createElement('span');
-    meta.className = 'hmeta';
-    meta.textContent = `${r.start} → ${r.end}`;
-    el.appendChild(meta);
-    const dur = document.createElement('span');
-    dur.className = 'hdur';
-    dur.textContent = r.duration;
-    el.appendChild(dur);
+    el.className = 'lrow' + (r.kind === 'warn' ? ' warn' : '');
+    const time = document.createElement('span');
+    time.className = 'ltime';
+    time.textContent = r.time || '';
+    el.appendChild(time);
+    const src = document.createElement('span');
+    src.className = 'lsrc ' + (r.source || '');
+    src.textContent = r.source || '—';
+    el.appendChild(src);
+    const msg = document.createElement('span');
+    msg.className = 'lmsg';
+    msg.textContent = r.text;
+    msg.title = r.text; // 单行截断，悬停看全文
+    el.appendChild(msg);
+
+    // 行右侧悬浮「复制」：复制完整一行（时间 + 来源 + 内容），便于贴给 agent 或 issue
+    const line = `${r.time}  [${r.source || '-'}] ${r.text}`;
+    const copy = document.createElement('button');
+    copy.className = 'lcopy';
+    copy.textContent = '复制';
+    copy.title = '复制这一行';
+    copy.onclick = async (e) => {
+      e.stopPropagation();
+      try {
+        await call('CopyText', line);
+        toast('已复制');
+      } catch {
+        toast('复制失败');
+      }
+    };
+    el.appendChild(copy);
     box.appendChild(el);
   }
 }
 
-$('clearHistoryBtn').onclick = async () => {
-  const btn = $('clearHistoryBtn');
-  if (!historyClearArmed) {
-    historyClearArmed = true;
+$('clearLogBtn').onclick = async () => {
+  const btn = $('clearLogBtn');
+  if (!logClearArmed) {
+    logClearArmed = true;
     btn.textContent = '确认清空';
     btn.classList.add('danger');
-    clearTimeout(historyClearTimer);
-    historyClearTimer = setTimeout(disarmClear, 3000);
+    clearTimeout(logClearTimer);
+    logClearTimer = setTimeout(disarmLogClear, 3000);
     return;
   }
-  disarmClear();
+  disarmLogClear();
   try {
-    await callPending('ClearHistory');
+    await callPending('ClearLog');
     toast('已清空');
-    const box = $('historyList');
-    box.dataset.sig = '';
-    box.innerHTML = '';
-    $('historyCount').textContent = '';
+    lastLogSig = '';
+    $('logList').innerHTML = '';
+    $('logCount').textContent = '';
+    // 清空后补一条「日志已清空」，确认动作已生效
+    loadLog();
   } catch {
     toast('清空失败');
   }
 };
 
-function disarmClear() {
-  historyClearArmed = false;
-  clearTimeout(historyClearTimer);
-  const btn = $('clearHistoryBtn');
+function disarmLogClear() {
+  logClearArmed = false;
+  clearTimeout(logClearTimer);
+  const btn = $('clearLogBtn');
   btn.textContent = '清空';
   btn.classList.remove('danger');
 }
@@ -527,8 +544,8 @@ async function refresh() {
   } finally {
     refreshing = false;
   }
-  // 历史页可见时顺带刷新历史（租约结束要能实时出现在列表里）
-  if (page === 'history') await loadHistory();
+  // 日志页可见时顺带刷新（事件发生后一秒内就能看到）
+  if (page === 'log') await loadLog();
 }
 
 refresh();

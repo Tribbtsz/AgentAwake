@@ -319,72 +319,96 @@ button.ghost.close:hover { color: var(--danger); }
 .btn-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .btn-row button { padding: 7px 11px; font-size: 12px; }
 
-/* ---------- 历史页：固定窗口高度，列表内部滚动 ---------- */
-main#pageHistory {
+/* ---------- 日志页：固定窗口高度，列表内部滚动 ---------- */
+main#pageLog {
   gap: 8px;
   padding-bottom: 6px;
 }
-main#pageHistory .lease-list { padding-top: 0; }
-.history-head {
+.log-head {
   display: flex;
   align-items: baseline;
   gap: 8px;
   flex: 0 0 auto;
 }
-/* 历史行：单行紧凑（点 + 名称 + 原因 + 时间 + 持续），不做卡片 */
-.hrow {
+.log-list {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: 2px;
+  /* 抵消 .lrow 的内边距，让日志文本与「日志」标题同一左边缘 */
+  margin: 0 -8px;
+  scrollbar-width: none;
+}
+.log-list::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.log-list:empty::after {
+  content: "暂无日志";
+  color: var(--faint);
+  font-size: 11px;
+}
+
+/* 日志行：时间 + 来源 + 消息，单行截断，悬停看全文 */
+.lrow {
+  position: relative;
+  display: flex;
+  align-items: baseline;
   gap: 8px;
-  padding: 7px 10px;
-  border-radius: var(--radius-sm);
-  animation: fade var(--dur) var(--ease);
+  padding: 4px 8px;
+  border-radius: 7px;
+  font-size: 11px;
+  line-height: 1.5;
 }
-.hrow:hover { background: var(--panel); }
-
-/* 状态点：跟着结束原因走——中性灰、警示琥珀（达到上限/心跳超时） */
-.hdot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+.lrow:hover { background: var(--panel); }
+.ltime {
   flex: 0 0 auto;
-  background: rgba(200, 205, 212, 0.45);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
 }
-.hrow.warn .hdot { background: var(--warn); }
-
-.hname {
-  flex: 0 1 auto;
+.lsrc {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--faint);
+  min-width: 62px;
+}
+/* 来源着色：awake 雾蓝、supervisor 绿、panel 中性、watchdog 琥珀 */
+.lsrc.awake { color: var(--accent); }
+.lsrc.supervisor { color: #7fc99b; }
+.lsrc.watchdog { color: var(--warn); }
+.lmsg {
+  flex: 1 1 auto;
   min-width: 0;
-  font-size: 12.5px;
-  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.hreason {
-  flex: 0 0 auto;
-  font-size: 10.5px;
-  color: var(--faint);
-}
-.hreason.warn { color: var(--warn); }
-.hmeta {
-  flex: 1 1 auto;
-  text-align: right;
-  font-size: 10.5px;
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.hdur {
-  flex: 0 0 auto;
-  font-size: 10.5px;
   color: var(--muted);
-  font-variant-numeric: tabular-nums;
+  user-select: text;
+  /* 给右侧悬浮「复制」按钮让位，避免盖住行尾文字 */
+  padding-right: 44px;
 }
-.hrow.warn .hdur { color: var(--warn); }
+.lrow.warn .lmsg { color: var(--warn); }
 
-#clearHistoryBtn.danger { color: var(--danger); }
-#clearHistoryBtn.danger:hover { color: var(--danger); opacity: 1; }
+/* 每行右侧悬浮「复制」：平时隐藏，悬停出现 */
+.lcopy {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+  padding: 2px 8px;
+  font-size: 10px;
+  border-radius: 7px;
+  color: var(--muted);
+  background: var(--panel-strong);
+  transition: opacity var(--dur) var(--ease);
+}
+.lrow:hover .lcopy { opacity: 1; pointer-events: auto; }
+.lcopy:hover { color: var(--text); }
+
+#clearLogBtn.danger { color: var(--danger); }
+#clearLogBtn.danger:hover { color: var(--danger); opacity: 1; }
 
 /* ---------- 设置页：内间距收紧 ---------- */
 main#pageSettings {

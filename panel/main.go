@@ -90,7 +90,7 @@ type panelPage int
 
 const (
 	pageStatus panelPage = iota
-	pageHistory
+	pageLog
 	pageSettings
 )
 
@@ -121,7 +121,7 @@ func main() {
 	a.snap = readSnapshot()
 
 	// --panel：启动时直接打开面板（也方便快捷方式/命令行调用）
-	// --history / --settings：启动时直接进对应页（托盘菜单与验收用）
+	// --log / --settings：启动时直接进对应页（托盘菜单与验收用）
 	openOnStart := false
 	a.debugToast = os.Getenv("AGENTAWAKE_DEMO_TOAST")
 	for _, arg := range os.Args[1:] {
@@ -131,9 +131,9 @@ func main() {
 		case "--settings", "-settings":
 			openOnStart = true
 			a.startPage = "settings"
-		case "--history", "-history":
+		case "--log", "-log", "--history", "-history":
 			openOnStart = true
-			a.startPage = "history"
+			a.startPage = "log"
 		}
 	}
 
@@ -337,8 +337,11 @@ func (a *app) showPanel() {
 	}
 	// 胶囊由 mygo 原生 ui 绘制（barnative.go）；只有面板是网页
 	startH := a.statusHeight()
-	if a.startPage == "settings" || a.startPage == "history" {
+	if a.startPage == "settings" {
 		startH = settingsHeight // 内容页首帧高度，进页后 FitHeight 修正
+	}
+	if a.startPage == "log" {
+		startH = logFixedHeight
 	}
 	a.win = mygo.NewWindow(mygo.WindowOptions{
 		Title:           "AgentAwake",

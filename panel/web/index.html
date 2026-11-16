@@ -14,7 +14,7 @@
       <span class="titlebar-build" id="buildTag"></span>
       <div class="spacer"></div>
       <button class="ghost" id="copyPromptBtn" title="复制给 agent 的使用说明">复制提示词</button>
-      <button class="ghost" id="navHistoryBtn">历史</button>
+      <button class="ghost" id="navLogBtn">日志</button>
       <button class="ghost" id="navBtn">设置</button>
       <button class="ghost close" id="closeBtn" title="关闭">✕</button>
     </header>
@@ -52,14 +52,14 @@
       <section class="lease-list" id="leases"></section>
     </main>
 
-    <main id="pageHistory" hidden>
-      <div class="history-head">
-        <h2 class="page-title">租约历史</h2>
-        <span class="muted" id="historyCount"></span>
+    <main id="pageLog" hidden>
+      <div class="log-head">
+        <h2 class="page-title">日志</h2>
+        <span class="muted" id="logCount"></span>
         <div class="spacer"></div>
-        <button class="btn small quiet" id="clearHistoryBtn">清空</button>
+        <button class="btn small quiet" id="clearLogBtn">清空</button>
       </div>
-      <section class="lease-list" id="historyList"></section>
+      <section class="log-list" id="logList"></section>
     </main>
 
     <main id="pageSettings" hidden>

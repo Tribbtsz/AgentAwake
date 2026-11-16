@@ -157,6 +157,15 @@ func leaseEndTime(l Lease, now time.Time, reason string) time.Time {
 	return now
 }
 
+// leaseHoldDuration 租约从申请到 t 的持续时长文案（日志行用）
+func leaseHoldDuration(l Lease, t time.Time) string {
+	start, err := parseStamp(l.CreatedAt)
+	if err != nil || t.Before(start) {
+		return "?"
+	}
+	return formatHistoryDuration(int64(t.Sub(start).Seconds()))
+}
+
 // ---------- 展示 ----------
 
 // formatHistoryDuration 人类可读的持续时长。
