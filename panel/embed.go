@@ -238,6 +238,26 @@ func (a *app) syncBarPresence() {
 		procSetWindowPos.Call(h, hwndTopmost, 0, 0, 0, 0,
 			uintptr(swPNoMove|swPNoSize|swPNoActivate))
 	}
+	// 位置校正：休眠唤醒后任务栏可能重建/改变高度或 DPI，胶囊会停在旧坐标
+	// （表现为浮在任务栏上方）。每 300ms 和目标位置比一次，偏了才重摆，
+	// 位置正常时不调 SetWindowPos。
+	if tx, ty, _, _, ok := a.barTargetRect(); ok {
+		var rc struct{ L, T, R, B int32 }
+		if r, _, _ := procGetWindowRect.Call(h, uintptr(unsafe.Pointer(&rc))); r != 0 {
+			dx := int(rc.L) - tx
+			dy := int(rc.T) - ty
+			if dx < 0 {
+				dx = -dx
+			}
+			if dy < 0 {
+				dy = -dy
+			}
+			if dx > 1 || dy > 1 {
+				dbg("胶囊位置漂移 (%d,%d)，重新摆位", dx, dy)
+				a.positionOverTaskbar()
+			}
+		}
+	}
 }
 
 // barShouldShow 任务栏被自动隐藏（只剩几像素）、或前台是全屏应用/演示模式时，
@@ -300,21 +320,21 @@ func isWindowVisible(hwnd uintptr) bool {
 	return r != 0
 }
 
-// positionOverTaskbar 覆盖模式：窗口保持顶层，直接贴在任务栏的空白区域上。
-// 比 SetParent 稳妥：不改父子关系，MyGo 的 GPU 绘制面不会被破坏。
-// 视觉上和「嵌在任务栏里」一样，因为它正好盖住任务栏的一条空白带。
-func (a *app) positionOverTaskbar() bool {
+// barTargetRect 计算覆盖模式下胶囊的目标位置（屏幕物理像素）。
+// 位置校正和实际摆位共用同一套公式，避免两处计算漂移。
+// 尺寸优先用窗口真实尺寸（页面自适应宽度时以它为准），否则按 DIP×缩放算。
+func (a *app) barTargetRect() (x, y, w, h int, ok bool) {
 	if a.bar == nil {
-		return false
+		return 0, 0, 0, 0, false
 	}
 	l, t, r, b, ok := taskbarRect()
 	if !ok {
-		return false
+		return 0, 0, 0, 0, false
 	}
 	tbH := b - t
 	tbW := r - l
 	if tbH > tbW {
-		return false // 垂直任务栏不适用
+		return 0, 0, 0, 0, false // 垂直任务栏不适用
 	}
 
 	barW, barH := a.currentBarSize()
@@ -322,34 +342,46 @@ func (a *app) positionOverTaskbar() bool {
 	if d := mygo.Screen.PrimaryDisplay(); d.ScaleFactor > 0 {
 		scale = float64(d.ScaleFactor)
 	}
-	physW := int(float64(barW) * scale)
-	physH := int(float64(barH) * scale)
-	// 页面自适应宽度时，用窗口真实尺寸摆放
+	w = int(float64(barW) * scale)
+	h = int(float64(barH) * scale)
 	var wr struct{ L, T, R, B int32 }
 	if rc, _, _ := procGetWindowRect.Call(a.bar.NativeHandle(), uintptr(unsafe.Pointer(&wr))); rc != 0 {
 		if realW := int(wr.R - wr.L); realW > 0 {
-			physW = realW
+			w = realW
 		}
 		if realH := int(wr.B - wr.T); realH > 0 {
-			physH = realH
+			h = realH
 		}
 	}
-	if physH > tbH {
-		physH = tbH
+	if h > tbH {
+		h = tbH
 	}
 
 	// 顶层窗口用屏幕坐标（不是客户区坐标）
-	defaultX := l + int(220*scale) + int(8*scale)
-	x := defaultX + int(float64(a.cfg.OffsetX)*scale)
+	x = l + int(220*scale) + int(8*scale) + int(float64(a.cfg.OffsetX)*scale)
 	if x < l {
 		x = l
 	}
-	if x+physW > r {
-		x = r - physW
+	if x+w > r {
+		x = r - w
 	}
-	y := t + (tbH-physH)/2
+	y = t + (tbH-h)/2
 	if y < t {
 		y = t
+	}
+	return x, y, w, h, true
+}
+
+// positionOverTaskbar 覆盖模式：窗口保持顶层，直接贴在任务栏的空白区域上。
+// 比 SetParent 稳妥：不改父子关系，MyGo 的 GPU 绘制面不会被破坏。
+// 视觉上和「嵌在任务栏里」一样，因为它正好盖住任务栏的一条空白带。
+func (a *app) positionOverTaskbar() bool {
+	if a.bar == nil {
+		return false
+	}
+	x, y, physW, physH, ok := a.barTargetRect()
+	if !ok {
+		return false
 	}
 
 	r1, _, lerr := procSetWindowPos.Call(
@@ -358,8 +390,8 @@ func (a *app) positionOverTaskbar() bool {
 		uintptr(physW), uintptr(physH),
 		uintptr(swPNoActivate|swPShowWindow),
 	)
-	dbg("positionOverTaskbar hwnd=%d tb=%d,%d,%d,%d -> %d,%d %dx%d ok=%v err=%v",
-		a.bar.NativeHandle(), l, t, r, b, x, y, physW, physH, r1 != 0, lerr)
+	dbg("positionOverTaskbar hwnd=%d -> %d,%d %dx%d ok=%v err=%v",
+		a.bar.NativeHandle(), x, y, physW, physH, r1 != 0, lerr)
 	dbg("  bar rect after: %s", windowRectText(a.bar.NativeHandle()))
 	return r1 != 0
 }

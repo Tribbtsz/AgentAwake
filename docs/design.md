@@ -70,6 +70,10 @@ awake acquire ──写──> leases\<id>.json
 `SetParent` 嵌进 `Shell_TrayWnd`（失去逐像素透明，退回采样任务栏底色）。
 explorer 重启后自动重挂，失败退回覆盖模式（`panel/embed.go`）。
 
+胶囊位置由 `keepOnTop` 的 300ms 轮询持续校正：休眠唤醒、分辨率/DPI 变化、
+任务栏重建之后窗口会停在旧坐标（表现为浮在任务栏上方），发现偏差超过 1px
+就按当前任务栏矩形重新摆位；位置正常时不调用 `SetWindowPos`。
+
 ## 性能
 
 面板**不轮询子进程**：状态直接读租约 JSON、`runtime.json` 和注册表。
