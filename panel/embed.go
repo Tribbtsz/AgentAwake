@@ -49,6 +49,7 @@ var (
 	procGetDC                        = user32.NewProc("GetDC")
 	procReleaseDC                    = user32.NewProc("ReleaseDC")
 	procGetPixel                     = gdi32.NewProc("GetPixel")
+	procGetDpiForWindow              = user32.NewProc("GetDpiForWindow")
 )
 
 const gaRoot = 2 // GA_ROOT
@@ -203,11 +204,18 @@ func (a *app) positionInTaskbar() bool {
 // keepOnTop 保持任务栏胶囊可见，但任务栏被自动隐藏或前台全屏时收起。
 // 每 300ms 回到主线程检查一次（开销只有几个 Win32 调用）。
 func (a *app) keepOnTop() {
+	tick := 0
 	for {
 		time.Sleep(300 * time.Millisecond)
 		mygo.RunOnMain(a.syncBarPresence)
 		// 呼吸停掉之后没有绘制帧，靠这个 300ms 轮询发现「人回来了」
 		mygo.RunOnMain(a.resumeBarGlow)
+		// 位置漂移检查 1.2s 一次就够（唤醒后一两秒内归位，用户无感），
+		// 它比可见性检查多几次 Win32 调用，不必 300ms 一次。
+		tick++
+		if tick%4 == 0 {
+			mygo.RunOnMain(a.checkBarDrift)
+		}
 	}
 }
 
@@ -238,25 +246,38 @@ func (a *app) syncBarPresence() {
 		procSetWindowPos.Call(h, hwndTopmost, 0, 0, 0, 0,
 			uintptr(swPNoMove|swPNoSize|swPNoActivate))
 	}
-	// 位置校正：休眠唤醒后任务栏可能重建/改变高度或 DPI，胶囊会停在旧坐标
-	// （表现为浮在任务栏上方）。每 300ms 和目标位置比一次，偏了才重摆，
-	// 位置正常时不调 SetWindowPos。
-	if tx, ty, _, _, ok := a.barTargetRect(); ok {
-		var rc struct{ L, T, R, B int32 }
-		if r, _, _ := procGetWindowRect.Call(h, uintptr(unsafe.Pointer(&rc))); r != 0 {
-			dx := int(rc.L) - tx
-			dy := int(rc.T) - ty
-			if dx < 0 {
-				dx = -dx
-			}
-			if dy < 0 {
-				dy = -dy
-			}
-			if dx > 1 || dy > 1 {
-				dbg("胶囊位置漂移 (%d,%d)，重新摆位", dx, dy)
-				a.positionOverTaskbar()
-			}
-		}
+}
+
+// checkBarDrift 位置校正：休眠唤醒后任务栏可能重建/改变高度或 DPI，
+// 胶囊会停在旧坐标（表现为浮在任务栏上方）。和目标位置比一次，
+// 偏了才重摆；位置正常时不调用 SetWindowPos。
+func (a *app) checkBarDrift() {
+	if a.bar == nil || !a.cfg.ShowBar || !a.overTaskbar || a.barSuppressed {
+		return
+	}
+	h := a.bar.NativeHandle()
+	if h == 0 || !isWindowVisible(h) {
+		return
+	}
+	tx, ty, _, _, ok := a.barTargetRect()
+	if !ok {
+		return
+	}
+	var rc struct{ L, T, R, B int32 }
+	if r, _, _ := procGetWindowRect.Call(h, uintptr(unsafe.Pointer(&rc))); r == 0 {
+		return
+	}
+	dx := int(rc.L) - tx
+	dy := int(rc.T) - ty
+	if dx < 0 {
+		dx = -dx
+	}
+	if dy < 0 {
+		dy = -dy
+	}
+	if dx > 1 || dy > 1 {
+		dbg("胶囊位置漂移 (%d,%d)，重新摆位", dx, dy)
+		a.positionOverTaskbar()
 	}
 }
 
@@ -338,8 +359,12 @@ func (a *app) barTargetRect() (x, y, w, h int, ok bool) {
 	}
 
 	barW, barH := a.currentBarSize()
+	// 缩放优先问窗口自己的 DPI（一次 API，跟随窗口所在显示器）；
+	// 面板每 300ms 都会走到这里，不能每帧去枚举显示器。
 	scale := 1.0
-	if d := mygo.Screen.PrimaryDisplay(); d.ScaleFactor > 0 {
+	if d, _, _ := procGetDpiForWindow.Call(a.bar.NativeHandle()); d != 0 {
+		scale = float64(d) / 96.0
+	} else if d := mygo.Screen.PrimaryDisplay(); d.ScaleFactor > 0 {
 		scale = float64(d.ScaleFactor)
 	}
 	w = int(float64(barW) * scale)
