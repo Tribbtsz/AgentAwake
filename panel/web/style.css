@@ -365,6 +365,52 @@ main#pageLog {
   line-height: 1.5;
 }
 .lrow:hover { background: var(--panel); }
+
+/* ---------- 租约泳道（类 git 连线） ---------- */
+/* 每行左侧的槽：同一张租约的「新建→结束」是一条竖线，起点实心点、终点空心圈。
+   最新在上：结束点在上、新建点在下，线跨行连续（上下各多画 1px 盖住行间距）。 */
+.lgutter {
+  position: absolute;
+  left: 4px;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+.lline {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 1.5px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  opacity: 0.5;
+}
+.ldot {
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--lane);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+/* 结束点画成空心圈：有始（实心）有终（圈） */
+.ldot.end {
+  background: var(--bg);
+  border: 1.5px solid var(--lane);
+  width: 6px;
+  height: 6px;
+  box-sizing: content-box;
+}
+/* 中途调整（extend）：小一号的实心点 */
+.ldot.mid {
+  width: 4px;
+  height: 4px;
+  box-shadow: none;
+  opacity: 0.8;
+}
+
 .ltime {
   flex: 0 0 auto;
   color: var(--muted);

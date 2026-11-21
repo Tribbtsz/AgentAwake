@@ -117,3 +117,124 @@ func TestClearLog(t *testing.T) {
 		t.Error("清空动作本身应留一行记录")
 	}
 }
+
+// ---------- 泳道（租约连线） ----------
+
+// 行序约定：rows[0] 是最新一行。start（旧）在下方、end（新）在上方。
+func TestLanesPairStartEnd(t *testing.T) {
+	rows := []logLineDTO{
+		{Text: "主动释放租约 bbbbbbbbbbbb [job] key=X 持续=2 分", Lease: "bbbbbbbbbbbb", Event: "end"}, // 0（最新）
+		{Text: "面板启动"}, // 1
+		{Text: "新建租约 bbbbbbbbbbbb [job] key=X", Lease: "bbbbbbbbbbbb", Event: "start"}, // 2（最旧）
+	}
+	assignLanes(rows)
+
+	if rows[0].Lane != 0 || rows[0].Event != "end" {
+		t.Errorf("结束行应在 0 号泳道，得到 lane=%d event=%s", rows[0].Lane, rows[0].Event)
+	}
+	if rows[2].Lane != 0 || rows[2].Event != "start" {
+		t.Errorf("新建行应在 0 号泳道，得到 lane=%d event=%s", rows[2].Lane, rows[2].Event)
+	}
+	// 中间无关行也要画这条线（线穿过整段区间）
+	if len(rows[1].Lanes) != 1 || rows[1].Lanes[0] != 0 {
+		t.Errorf("中间行应穿过 0 号泳道，得到 %v", rows[1].Lanes)
+	}
+	if rows[1].Lane != -1 {
+		t.Errorf("非租约事件行不应有 lane 点，得到 %d", rows[1].Lane)
+	}
+}
+
+// 两段租约时间交错 → 两条竖线，不同泳道
+func TestLanesOverlapDifferentLanes(t *testing.T) {
+	rows := []logLineDTO{
+		{Lease: "aaaaaaaaaaaa", Event: "end"},   // 0  A 结束
+		{Lease: "bbbbbbbbbbbb", Event: "end"},   // 1  B 结束
+		{Lease: "aaaaaaaaaaaa", Event: "start"}, // 2  A 开始
+		{Lease: "bbbbbbbbbbbb", Event: "start"}, // 3  B 开始
+	}
+	assignLanes(rows)
+	if rows[0].Lane == rows[1].Lane {
+		t.Errorf("交错的租约应分到不同泳道：A=%d B=%d", rows[0].Lane, rows[1].Lane)
+	}
+	// A 的线穿过 1、2 行；B 的线穿过 2 行（B 的区间 1..3）
+	if len(rows[2].Lanes) != 2 {
+		t.Errorf("第 2 行应同时穿过两条线，得到 %v", rows[2].Lanes)
+	}
+}
+
+// 未结束的租约：线一直画到最新行（窗口顶端）
+func TestLanesActiveLeaseExtendsToTop(t *testing.T) {
+	rows := []logLineDTO{
+		{Text: "其他日志"},                          // 0 最新
+		{Lease: "cccccccccccc", Event: "start"}, // 1 新建后再没结束
+	}
+	assignLanes(rows)
+	if len(rows[0].Lanes) != 1 {
+		t.Errorf("未结束租约的线应延伸到最新行，得到 %v", rows[0].Lanes)
+	}
+	if rows[1].Lane != 0 {
+		t.Errorf("新建点应在 0 号泳道，得到 %d", rows[1].Lane)
+	}
+}
+
+// 开始早于日志窗口（只见结束）：线从最旧行接进来
+func TestLanesEndOnlyExtendsToBottom(t *testing.T) {
+	rows := []logLineDTO{
+		{Lease: "dddddddddddd", Event: "end"}, // 0
+		{Text: "其他日志"},                        // 1 最旧
+	}
+	assignLanes(rows)
+	if len(rows[1].Lanes) != 1 {
+		t.Errorf("只见结束的租约线应延伸到最旧行，得到 %v", rows[1].Lanes)
+	}
+}
+
+// 前后不重叠的租约复用同一条泳道（和 git 分支一样）
+func TestLanesReuseAfterEnd(t *testing.T) {
+	rows := []logLineDTO{
+		{Lease: "eeeeeeeeeeee", Event: "end"},   // 0
+		{Lease: "eeeeeeeeeeee", Event: "start"}, // 1
+		{Lease: "ffffffffffff", Event: "end"},   // 2
+		{Lease: "ffffffffffff", Event: "start"}, // 3
+	}
+	assignLanes(rows)
+	if rows[0].Lane != rows[2].Lane {
+		t.Errorf("不重叠的租约应复用泳道：%d vs %d", rows[0].Lane, rows[2].Lane)
+	}
+}
+
+// 中途「调整」行有 mid 事件点，线仍是连续的
+func TestLanesMidEvent(t *testing.T) {
+	rows := []logLineDTO{
+		{Lease: "gggggggggggg", Event: "end"},
+		{Lease: "gggggggggggg", Event: "mid"},
+		{Lease: "gggggggggggg", Event: "start"},
+	}
+	assignLanes(rows)
+	if rows[1].Event != "mid" || rows[1].Lane != 0 {
+		t.Errorf("中途调整应在 0 号泳道打点，得到 lane=%d event=%s", rows[1].Lane, rows[1].Event)
+	}
+	if len(rows[1].Lanes) != 1 {
+		t.Errorf("中途调整行也要画线，得到 %v", rows[1].Lanes)
+	}
+}
+
+func TestLeaseEventParse(t *testing.T) {
+	cases := []struct {
+		text, id, ev string
+	}{
+		{"新建租约 6df3a5207cf2 [job] key=ABC234 模式=release", "6df3a5207cf2", "start"},
+		{"主动释放租约 6df3a5207cf2 [job] key=ABC234 持续=2 分", "6df3a5207cf2", "end"},
+		{"手动停止租约 6df3a5207cf2 [job] key=ABC234 持续=2 分", "6df3a5207cf2", "end"},
+		{"租约结束 6df3a5207cf2 [job] key=ABC234 原因=deadline 持续=30 分", "6df3a5207cf2", "end"},
+		{"调整租约 6df3a5207cf2 [job] 到 2026-11-17 06:00", "6df3a5207cf2", "mid"},
+		{"面板启动 v0.2.1：胶囊=覆盖任务栏", "", ""},
+		{"租约已全部结束，恢复原来的电源设置", "", ""},
+	}
+	for _, c := range cases {
+		id, ev := leaseEvent(c.text)
+		if id != c.id || ev != c.ev {
+			t.Errorf("leaseEvent(%q) = (%q,%q), want (%q,%q)", c.text, id, ev, c.id, c.ev)
+		}
+	}
+}

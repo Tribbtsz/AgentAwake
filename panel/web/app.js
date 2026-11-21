@@ -217,9 +217,53 @@ async function loadLog() {
   $('logCount').textContent = rows.length >= 300 ? '· 最近 300 行' : (rows.length ? `· ${rows.length} 行` : '');
   if (rows.length === 0) return; // 空态样式由 CSS :empty::after 呈现
 
+  // 泳道：同一张租约的「新建→结束」用一条竖线连起来（最新在上：结束点在上、新建点在下）。
+  // Go 侧已算好每行穿过哪些泳道（lanes）以及本行事件在哪个泳道（lane）。
+  let maxLane = -1;
+  for (const r of rows) {
+    for (const l of (r.lanes || [])) if (l > maxLane) maxLane = l;
+  }
+  const laneColors = ['var(--accent)', '#7fc99b', '#c9a878'];
+  const laneX = (l) => 4 + l * 8;
+  const gutterW = maxLane >= 0 ? (maxLane + 1) * 8 + 2 : 0;
+
   for (const r of rows) {
     const el = document.createElement('div');
     el.className = 'lrow' + (r.kind === 'warn' ? ' warn' : '');
+    if (gutterW) el.style.paddingLeft = (gutterW + 4) + 'px';
+
+    if (gutterW) {
+      const gut = document.createElement('div');
+      gut.className = 'lgutter';
+      gut.title = '竖线：同一张租约「新建 → 结束」';
+      for (const lane of (r.lanes || [])) {
+        const line = document.createElement('span');
+        line.className = 'lline';
+        line.style.left = laneX(lane) + 'px';
+        line.style.background = laneColors[lane % laneColors.length];
+        if (r.lane === lane) {
+          // 起点行：线从圆点向上（接更新的行）；结束行：线从圆点向下（接更旧的行）。
+          // 上下各多出 1px，盖住行间距，让竖线跨行连续。
+          if (r.event === 'start') {
+            line.style.top = '-1px';
+            line.style.bottom = '50%';
+          } else if (r.event === 'end') {
+            line.style.top = '50%';
+            line.style.bottom = '-1px';
+          }
+        }
+        gut.appendChild(line);
+      }
+      if (r.lane >= 0 && r.event) {
+        const dot = document.createElement('span');
+        dot.className = 'ldot' + (r.event === 'end' ? ' end' : r.event === 'mid' ? ' mid' : '');
+        dot.style.left = laneX(r.lane) + 'px';
+        dot.style.setProperty('--lane', laneColors[r.lane % laneColors.length]);
+        gut.appendChild(dot);
+      }
+      el.appendChild(gut);
+    }
+
     const time = document.createElement('span');
     time.className = 'ltime';
     time.textContent = r.time || '';
