@@ -213,6 +213,9 @@ async function loadLog() {
   lastLogSig = sig;
 
   const box = $('logList');
+  // 新行总是插在最前面。如果用户正停在顶部，重建后必须钉回顶部：
+  // 否则浏览器的滚动锚定会保留旧锚点，把最新一两行顶出可视区（看起来「顶部被遮住」）。
+  const pinnedTop = box.scrollTop <= 8;
   box.innerHTML = '';
   $('logCount').textContent = rows.length >= 300 ? '· 最近 300 行' : (rows.length ? `· ${rows.length} 行` : '');
   if (rows.length === 0) return; // 空态样式由 CSS :empty::after 呈现
@@ -227,7 +230,8 @@ async function loadLog() {
   const laneX = (l) => 4 + l * 8;
   const gutterW = maxLane >= 0 ? (maxLane + 1) * 8 + 2 : 0;
 
-  for (const r of rows) {
+  for (let ri = 0; ri < rows.length; ri++) {
+    const r = rows[ri];
     const el = document.createElement('div');
     el.className = 'lrow' + (r.kind === 'warn' ? ' warn' : '');
     if (gutterW) el.style.paddingLeft = (gutterW + 4) + 'px';
@@ -238,7 +242,10 @@ async function loadLog() {
       gut.title = '竖线：同一张租约「新建 → 结束」';
       for (const lane of (r.lanes || [])) {
         const line = document.createElement('span');
-        line.className = 'lline';
+        // 第 0 行是日志窗口顶端：延伸到顶端的线（穿过行 / 起点在顶行）向上渐隐，
+        // 表示「还在继续」；结束点就在顶行时线只向下，不碰顶端，无需渐隐。
+        const reachesTop = ri === 0 && !(r.lane === lane && r.event === 'end');
+        line.className = 'lline' + (reachesTop ? ' edge' : '');
         line.style.left = laneX(lane) + 'px';
         line.style.background = laneColors[lane % laneColors.length];
         if (r.lane === lane) {
@@ -296,6 +303,7 @@ async function loadLog() {
     el.appendChild(copy);
     box.appendChild(el);
   }
+  if (pinnedTop) box.scrollTop = 0;
 }
 
 $('clearLogBtn').onclick = async () => {

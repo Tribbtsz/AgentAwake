@@ -341,7 +341,8 @@ main#pageLog {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding-top: 2px;
+  /* 顶部留白：第一行的圆点/竖线不贴着列表边缘（被硬切的观感） */
+  padding: 6px 0 4px;
   /* 抵消 .lrow 的内边距，让日志文本与「日志」标题同一左边缘 */
   margin: 0 -8px;
   scrollbar-width: none;
@@ -384,6 +385,11 @@ main#pageLog {
   transform: translateX(-50%);
   border-radius: 1px;
   opacity: 0.5;
+}
+/* 延伸到最新一行（窗口顶端）的线：向上渐隐，表示「还在继续」而不是被硬切 */
+.lline.edge {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 10px);
 }
 .ldot {
   position: absolute;
