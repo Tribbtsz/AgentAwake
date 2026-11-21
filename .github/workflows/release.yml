@@ -13,7 +13,10 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
+      # 需要完整历史与 tag：发布说明要列「上个版本以来的提交」
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -57,7 +60,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ github.ref_name }}
         run: |
+          # git 输出是 UTF-8：统一控制台编码，避免中文提交信息变成乱码
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+          $OutputEncoding = [Text.Encoding]::UTF8
+
+          # 更新列表：上一个 tag 到本 tag 的提交（仓库用约定式提交，本身就是变更说明）。
+          # 首个版本没有上一个 tag 时，列出到本 tag 为止的全部提交。
+          $prev = git describe --tags --abbrev=0 "$($env:VERSION)^" 2>$null
+          $range = if ($prev) { "$prev..$env:VERSION" } else { $env:VERSION }
+          $changes = (git log $range --no-merges --pretty=format:"- %s" | Out-String).Trim()
+          if (-not $changes) { $changes = "- （没有新的提交记录）" }
+
           @"
+          ## 更新内容
+
+          $changes
+
           ## 下载
 
           - **AgentAwake-$env:VERSION-windows-x64.zip** — 解压到任意目录，双击 ``panel.exe``。

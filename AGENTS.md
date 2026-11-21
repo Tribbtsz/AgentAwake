@@ -56,6 +56,10 @@ cd panel; go test ./...; go build ./...
 3. `git push origin vX.Y.Z` — `.github/workflows/release.yml` 自动构建
    zip（含两个 exe + README/LICENSE/DESIGN）、生成 SHA256 并发布 Release
 
+**发布说明**：自动附上「上一个 tag 以来的提交列表」（`git log 上个tag..本tag`，
+不含 merge 提交）。仓库用约定式提交，提交标题就是变更说明——所以提交信息要写成
+用户看得懂的一句话，不要 `wip` / `update` 这类含糊标题。
+
 **产物**：`AgentAwake-vX.Y.Z-windows-x64.zip` + `checksums-sha256.txt`；
 目前只发 windows-x64，未做代码签名（SmartScreen 提示在 Release 说明里告知）。
 
