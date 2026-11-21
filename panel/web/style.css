@@ -445,7 +445,9 @@ main#pageLog {
 }
 .lrow.warn .lmsg { color: var(--warn); }
 
-/* 每行右侧悬浮「复制」：平时隐藏，悬停出现 */
+/* 每行右侧悬浮「复制」：平时隐藏，悬停出现。
+   注意顶部的 transform 是绝对定位的垂直居中，按下时必须一并保留——
+   全局 button:active 的 scale() 会覆盖 transform，按钮会往下掉半个身位。 */
 .lcopy {
   position: absolute;
   right: 6px;
@@ -458,10 +460,11 @@ main#pageLog {
   border-radius: 7px;
   color: var(--muted);
   background: var(--panel-strong);
-  transition: opacity var(--dur) var(--ease);
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
 }
 .lrow:hover .lcopy { opacity: 1; pointer-events: auto; }
 .lcopy:hover { color: var(--text); }
+.lcopy:active { transform: translateY(-50%) scale(0.96); }
 
 #clearLogBtn.danger { color: var(--danger); }
 #clearLogBtn.danger:hover { color: var(--danger); opacity: 1; }
